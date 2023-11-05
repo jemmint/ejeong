@@ -7,7 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, comment = NA,  warning = FALSE, message = FALSE)
-knitr::opts_knit$set(root.dir = "Z:/usersurvey/_CSCW24")
+#knitr::opts_knit$set(root.dir = "Z:/usersurvey/_CSCW24")
 
 library(readr)
 library(dplyr)
@@ -22,32 +22,34 @@ library(DT)
 library(corrplot)
 library(stringr)
 library(mirt)
+library(reshape2)
+library(tidyverse)
 
-# get_os <- function(){
-#   sysinf <- Sys.info()
-#   if (!is.null(sysinf)){
-#     os <- sysinf['sysname']
-#     if (os == 'Darwin')
-#       os <- "osx"
-#   } else { ## mystery machine
-#     os <- .Platform$OS.type
-#     if (grepl("^darwin", R.version$os))
-#       os <- "osx"
-#     if (grepl("linux-gnu", R.version$os))
-#       os <- "linux"
-#   }
-#   tolower(os)
-# }
-# 
-# if(get_os() == "osx") {setwd("/Volumes/cbjackson2/usersurvey/_CSCW24/")} else
-# {setwd("Z:/usersurvey/_CSCW24/")}
-# survey <- read_csv("GenAI.csv",show_col_types = FALSE)
+get_os <- function(){
+  sysinf <- Sys.info()
+  if (!is.null(sysinf)){
+    os <- sysinf['sysname']
+    if (os == 'Darwin')
+      os <- "osx"
+  } else { ## mystery machine
+    os <- .Platform$OS.type
+    if (grepl("^darwin", R.version$os))
+      os <- "osx"
+    if (grepl("linux-gnu", R.version$os))
+      os <- "linux"
+  }
+  tolower(os)
+}
 
-setwd("Z:/usersurvey/_CSCW24")
-survey <- read_csv("Z:/usersurvey/_CSCW24/GenAI.csv",show_col_types = FALSE)
+if(get_os() == "osx") {setwd("/Volumes/cbjackson2/usersurvey/_CSCW24/")} else
+{setwd("Z:/usersurvey/_CSCW24/")}
+survey <- read_csv("GenAI.csv",show_col_types = FALSE)
+
+# setwd("Z:/usersurvey/_CSCW24")
+# survey <- read_csv("Z:/usersurvey/_CSCW24/GenAI.csv",show_col_types = FALSE)
 ```
 
-## Data cleaning: 124 valid responses
+## Data cleaning: 123 valid responses
 
 ```{r}
 survey_c <- survey[-c(1:2),]
@@ -56,11 +58,18 @@ survey_c <- survey_c[which(survey_c$Status != "Survey Preview"),] #remove survey
 survey_c <- survey_c[which(survey_c$Status != "Spam"),]
 
 #Remove duplication
-#1. duplicate responses to open-end questions
-survey_c <- survey_c[!duplicated(survey_c[,c("Q34","Q40","Q27","Q28")]),]
-#2. there are 2 duplicate email address (expect 2 duplicates,NA)
+#1. identical responses to open-end questions (153 obs)
+col <- c("Q34", "Q40", "Q27", "Q28")
+dup_q <- survey_c[duplicated(survey_c[col]) | duplicated(survey_c[col], fromLast = TRUE), ]
+survey_c <- survey_c %>%
+  filter(!duplicated(survey_c[col]) & !duplicated(survey_c[col], fromLast = TRUE))
+#survey_c <- survey_c[!duplicated(survey_c[,c("Q34","Q40","Q27","Q28")]),]
+
+#2. identical email address (4 obs exept for NAs)
 dup_email <- survey_c %>% filter(duplicated(Q51) | duplicated(Q51, fromLast = TRUE)) 
-survey_c <- survey_c[!duplicated(survey_c$Q51) | is.na(survey_c$Q51), ]
+filtered_survey_c <- survey_c %>%
+  filter(is.na(Q51)|!duplicated(Q51) | !duplicated(Q51, fromLast = TRUE))
+
 #3. keep duplicated IP address -> overall, responses are not identical (email address, open-end responses)
 dup_ip <- survey_c %>% filter(duplicated(IPAddress) | duplicated(IPAddress, fromLast = TRUE))
 
@@ -68,20 +77,160 @@ dup_ip <- survey_c %>% filter(duplicated(IPAddress) | duplicated(IPAddress, from
 survey_c <-survey_c %>% filter(!is.na(Q33_1))
 ```
 
-## Descriptive statistics: frequency tables, bar graphs: 
-  *Q12- How long have you worked as a software engineer? (group)
+## Descriptive statistics: frequency table, bar graph 
+### Demographics
+  *Q42 - What is your age?
   
-```{r}
-t_Q12 <- datatable(survey_c %>% 
+```{r, echo=FALSE}
+t_q42 <- datatable(survey_c %>% 
+                    group_by(Q42) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q42 
+```
+ 
+  *Q43 - How do you identify your gender?
+  
+```{r, echo=FALSE}
+t_q43 <- datatable(survey_c %>% 
+                    group_by(Q43) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q43 
+```  
+    
+    *Q45 - How would you best describe your race/ethnicity?
+  
+```{r, echo=FALSE}
+eth <- survey_c %>%
+  separate_rows(Q45, sep = ",") 
+t_q45 <- datatable(eth %>% 
+                    group_by(Q45) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q45 
+```  
+    
+    *Q46 - What is your highest level of education?
+  
+```{r, echo=FALSE}
+t_q46 <- datatable(survey_c %>% 
+                    group_by(Q46) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q46 
+```    
+    
+    *Q4 - Are you currently located in the United States?
+  
+```{r, echo=FALSE}
+t_q4 <- datatable(survey_c %>% 
+                    group_by(Q4) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q4
+```
+    
+    *Q5 - Which of the following categories best describes your current employment status?
+  
+```{r, echo=FALSE}
+t_q5 <- datatable(survey_c %>% 
+                    group_by(Q5) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q5
+```  
+    
+    *Q6 - How would you classify your most recent Computer and Information Technology
+job? (check all that apply)
+  
+```{r, echo=FALSE}
+job <- survey_c %>%
+  separate_rows(Q6, sep = ",") 
+t_q6 <- datatable(job %>% 
+                    group_by(Q6) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q6
+```
+    
+    *Q11 - How would you classify the industry where you worked most recently as a software
+engineer? (check all that apply)
+  
+```{r, echo=FALSE}
+industry <- survey_c %>%
+  separate_rows(Q11, sep = ",") 
+t_q11 <- datatable(industry %>% 
+                    group_by(Q11) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q11
+```  
+
+### Usage patterns    
+    *Q18 - How often do/did you use GenAI tools for software engineering work? (na=have not used GenAI)
+  
+```{r, echo=FALSE}
+#remove na (1)
+t_q18 <- datatable(survey_c %>% 
+                    filter(!is.na(Q18)) %>% 
+                    group_by(Q18) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q18
+```  
+  
+  *Q12- How long have you worked as a software engineer?
+  
+```{r, echo=FALSE}
+t_q12 <- datatable(survey_c %>% 
                     group_by(Q12) %>% 
                     tally() %>%
                     arrange(desc(n)) %>%
                     mutate(freq = round(n / sum(n),digits=2)))
-t_Q12 
+t_q12 
+
+# Create a data frame for charts
+df_q12 <- survey_c %>%
+  group_by(Q12) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq),digits = 2))
+
+#bar grahp
+b_q12 <- ggplot(data = df_q12, aes(x = reorder(Q12, freq), y = freq)) +
+  geom_bar(stat = "identity", width = 0.5, fill = "darkblue") +
+  theme_minimal() +
+  labs(title = "Distribution of work years", x = "work years", y = "Count") +
+  geom_text(aes(label = freq), color = "white", vjust = 1, hjust = 1.5, size = 3) +
+  scale_fill_manual(values = "darkblue") +
+  theme(legend.position = "none") +
+  coord_flip() + scale_fill_aaas()  + theme(legend.position="none")
+b_q12
+
+# Create the pie chart
+p_q12 <- ggplot(data = df_q12, aes(x = "", y = percent, fill = Q12)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  labs(title = "Distribution of work years") +
+  theme_void() +
+  geom_text(aes(label = paste0(round(percent*100), '%')),
+            position = position_stack(vjust = 0.5), size = 2.5)
+
+p_q12
 ```
   *Q13 - Which of the following tasks best describes the activities that you do/did in your role as a software engineer?
 
-```{r}
+```{r, echo=FALSE}
 task <- survey_c %>%
   separate_rows(Q13, sep = ",")
 t_Q13 <- datatable(task %>% 
@@ -94,7 +243,7 @@ t_Q13
  
   *Q16- Have you used GenAI?
  
-```{r}
+```{r, echo=FALSE}
 # Q16- have you used GenAI?
 ##frequency table
 use_t <- table(survey_c$Q16)  
@@ -107,37 +256,12 @@ t_Q16 <- datatable(survey_c %>%
                     arrange(desc(n)) %>%
                     mutate(freq = round(n / sum(n),digits=2)))
 t_Q16
-
-##ggplot (https://emflant.tistory.com/293)
-Q16_bar <- ggplot(survey_c, aes(x=factor(Q16)))+
-  geom_bar(width=0.5, fill="darkblue")+
-  theme_minimal() + labs(title="Experience of using GenAI tools for software engineering", x="Experience of using GenAI", y="Count") +
-  geom_text(stat="count", aes(label=..count..),color = "white", vjust=1, hjust=1)+
-  coord_flip() + scale_fill_aaas()  + theme(legend.position="none")
-Q16_bar
-
-## barplot
-barplot(use_t, 
-        horiz = TRUE,  
-        main = "Experience of using GenAI tools for software engineering",
-        xlim = c(0,120),
-        ylim = c(0,5),
-        width = 1,
-        col = "darkblue",  
-        border = "black",  
-        names.arg = names(use_t),  
-        las = 1,
-        cex.names = 0.45,
-        cex.axis = 0.45,
-        space = 0.7,
-        axes = FALSE)
-axis(side=1,cex.axis = 0.45, at=seq(0,120,by=10))
 ```        
 
  *Q17-What GenAI tools have you used for software engineering work? (check all that
 apply)
  
-```{r}
+```{r, echo=FALSE}
 tool <- survey_c %>%
   separate_rows(Q17, sep = ",")  # Adjust the separator to match your data
 tool_t <- table(tool$Q17) 
@@ -152,10 +276,24 @@ t_Q17 <- datatable(tool %>%
                     mutate(freq = round(n / sum(n),digits=2)))
 t_Q17
 ```
+    
+    *Q22 - What GenAI tools have you used to attain knowledge and skills for software
+engineering work? (check all that apply)
+  
+```{r, echo=FALSE}
+tool <- survey_c %>%
+  separate_rows(Q22, sep = ",") 
+t_q22 <- datatable(tool %>% 
+                    group_by(Q22) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q22
+```  
   
   *Q19-What are/were your purposes for using GenAI tools in software engineering work? (check all that apply)
  
-```{r} 
+```{r, echo=FALSE} 
 aim <- survey_c %>%
   separate_rows(Q19, sep = ",")  # Adjust the separator to match your data
 
@@ -166,21 +304,11 @@ t_Q19 <- datatable(aim %>%
                     arrange(desc(n)) %>%
                     mutate(freq = round(n / sum(n),digits=2)))
 t_Q19
-
-# #Split responses - does not work
-# conditions <- survey_c$Q19 %in% "Self-evaluating performances based on the feedback/suggestions provided by GenAI tools (e.g., debugging)"
-# survey_c$Q19[conditions] <- "Self-evaluating performances"
-# survey_c$Q19 <- gsub("Self-evaluating performances based on the feedback/suggestions provided by GenAI tools (e.g., debugging)", "Self-evaluating performances", survey_c$Q19)
-# library(stringr)
-# survey_c$Q19 <- str_replace(survey_c$Q19, "Self-evaluating performances based on the feedback/suggestions provided by GenAI tools (e.g., debugging)", "Self-evaluating performances")
-# recode values in r
-# survey_c$Q19 <- dplyr::recode(survey_c$Q19, "Self-evaluating performances based on the feedback/suggestions provided by GenAI tools (e.g., debugging)" = "Self-evaluating performances")
-
 ```
 
   *Q20- How do you think the GenAI tools help you with software engineering work? (check all that apply
 
-```{r}
+```{r, echo=FALSE}
 benefit <- survey_c %>%
   separate_rows(Q20, sep = ",")  # Adjust the separator to match your data
 
@@ -194,7 +322,8 @@ t_Q20
 ```
 
   *Q21 - In the previous question you indicated that "I can attain knowledge and skills" when using GenAI tools. In what practices do you want to use GenAI tools for the purpose of attaining knowledge and skills for software engineering? (check all that apply)
-```{r}
+  
+```{r, echo=FALSE}
 practice <- survey_c %>%
   separate_rows(Q21, sep = ",")  # Adjust the separator to match your data
 
@@ -209,7 +338,7 @@ t_Q21
   
   *Q23 - In the previous question you indicated that "I can attain knowledge and skills" when using GenAI tools. What kind of knowledge and skills for software engineering work do you want to learn through the GenAI tools? (check all that apply)
 
-```{r}
+```{r, echo=FALSE}
 skill <- survey_c %>%
   separate_rows(Q23, sep = ",")  # Adjust the separator to match your data
 
@@ -224,7 +353,7 @@ t_Q23
 
   *Q24 - In the previous question you did not indicate "I can attain knowledge and skills"when using GenAI tools. Have you ever felt the need to attain knowledge and skills for software engineering work?
 
-```{r}
+```{r, echo=FALSE}
 t_Q24 <- datatable(survey_c %>%  
                     group_by(Q24) %>% 
                     tally() %>%
@@ -234,7 +363,8 @@ t_Q24
 ```
 
   *Q25 - For what practices do you feel the need to attain knowledge and skills for software engineering work? (check all that apply)
-```{r}  
+  
+```{r, echo=FALSE}  
 practice_2 <- survey_c %>%
   separate_rows(Q25, sep = ",")  # Adjust the separator to match your data
 
@@ -251,7 +381,7 @@ t_Q25
   *Q26 - What kind of knowledge and skills do you feel the need to learn for software
 engineering work? (check all that apply)
 
-```{r}
+```{r, echo=FALSE}
 skill_2 <- survey_c %>%
   separate_rows(Q26, sep = ",")  # Adjust the separator to match your data
 
@@ -265,51 +395,124 @@ t_Q26
 ```
 
  * Q33 - Rate the level of importance of each of following items when considering the use of GenAI tools in learning (e.g., attaining knowledge and skills) during software engineering work (1: not important at all, 5: very important).
-```{r}
+ 
+```{r, echo=FALSE}
 # List of column names you want to convert to numeric
 columns_to_convert <- c("Q33_1", "Q33_2", "Q33_3", "Q33_4", "Q33_5", "Q33_6", "Q33_7", "Q33_8", "Q33_9", "Q33_10", "Q33_11")
-
-# Convert the specified columns to numeric
 survey_c <- survey_c %>%
   mutate_at(vars(all_of(columns_to_convert)), as.numeric)
 
-accountability <- survey_c %>%
-  filter(!is.na(Q33_1)) %>% 
-  summarize(
-    Min = min(`Q33_1`, na.rm = TRUE),   
-    Max = max(`Q33_1`, na.rm = TRUE),   
-    Mean = mean(`Q33_1`, na.rm = TRUE), 
-    SD = sd(`Q33_1`, na.rm = TRUE),    
-    Variance = var(`Q33_1`, na.rm = TRUE), 
-    Count = n()
-  )
-accountability
+summary_stats <- sapply(survey_c[, columns_to_convert], function(x) c(
+  round(min(x), digits = 2),
+  round(max(x), digits = 2),
+  round(mean(x), digits = 2),
+  round(sd(x), digits = 2),
+  round(var(x), digits = 2)
+))
+summary_stats <- as.data.frame(summary_stats)
+col_stat <- c("Accountability","Reliability","Transparency","Fairness", "Privacy","Security","Safety","Autonomy","Flexibility","Accessibility","Customization")
+colnames(summary_stats) <- col_stat
+row_stat <- c("Min","Max","Mean","StandardDeviation","Variance")
+rownames(summary_stats) <- row_stat
+datatable(summary_stats)
+
+# Reshape the data into a long format
+summary_stats_long <- summary_stats %>%
+  rownames_to_column(var = "Statistic") %>%
+  pivot_longer(cols = -Statistic, names_to = "Variable", values_to = "Value")
+
+# Create a grouped bar graph
+grouped_bar <- ggplot(summary_stats_long, aes(x = Variable, y = Value, fill = Statistic)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  labs(title = "Summary Statistics",
+       x = "Variable",
+       y = "Value") +
+  theme_minimal()
+grouped_bar
+```
+
+ * Q36 - When do you want the GenAI tools to assist you in learning knowledge and skills
+for software engineering work? (check all that apply)
+
+```{r, echo=FALSE}
+q36 <- survey_c %>%
+  separate_rows(Q36, sep = ",")  # Adjust the separator to match your data
+
+##Datatable
+t_q36 <- datatable(q36 %>%  
+                    group_by(Q36) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q36 
+```
+
+ * Q37 - How do you want the GenAI tools to assist you in learning knowledge and skills for
+software engineering work? (check all that apply)
+
+```{r, echo=FALSE}
+q37 <- survey_c %>%
+  separate_rows(Q37, sep = ",")  # Adjust the separator to match your data
+
+##Datatable
+t_q37 <- datatable(q37 %>%  
+                    group_by(Q37) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q37 
+
+```
+
+ * Q38 -  Where do you want the GenAI tools to offer assistance for learning knowledge and
+skills for software engineering work? (e.g., information wrapped in tooltips)? (check all that apply)
+
+```{r, echo=FALSE}
+q38 <- survey_c %>%
+  separate_rows(Q38, sep = ",")  # Adjust the separator to match your data
+
+##Datatable
+t_q38 <- datatable(q38 %>%  
+                    group_by(Q38) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q38
+```
+ 
+ * Q39 -  Which aspects of learning for software engineering work can be improved more by
+the assistance of GenAI? (check all that apply)
+
+```{r, echo=FALSE}
+q39 <- survey_c %>%
+  separate_rows(Q39, sep = ",")  # Adjust the separator to match your data
+
+##Datatable
+t_q39 <- datatable(q39 %>%  
+                    group_by(Q39) %>% 
+                    tally() %>%
+                    arrange(desc(n)) %>%
+                    mutate(freq = round(n / sum(n),digits=2)))
+t_q39
 ```
 
 ### Compare responses of different user groups: 
 
 ```{r pressure, echo=FALSE}
 
-#mosaic plot
-table <- table(survey_c$Q45, survey_c$Q36)
-mosaicplot(table,
-  main = "Mosaic plot",
-  color = TRUE
-)
-
 ```
 
 ## Chi-square test
 
 ```{r}
-#Chi-square test
-eth_timing <- chisq.test(survey_c$Q45, survey_c$Q36, correct=FALSE)
-# printing the p-value
-eth_timing$p.value
-# printing the mean
-eth_timing$estimate
-
-#Fisher's exact test (Fisher’s exact test is used when there is at least one cell in the contingency table of the expected frequencies below 5)
-#https://statsandr.com/blog/fisher-s-exact-test-in-r-independence-test-for-a-small-sample/
-test <- fisher.test(dataframe)
+# #Chi-square test
+# eth_timing <- chisq.test(survey_c$Q45, survey_c$Q36, correct=FALSE)
+# # printing the p-value
+# eth_timing$p.value
+# # printing the mean
+# eth_timing$estimate
+# 
+# #Fisher's exact test (Fisher’s exact test is used when there is at least one cell in the contingency table of the expected frequencies below 5)
+# #https://statsandr.com/blog/fisher-s-exact-test-in-r-independence-test-for-a-small-sample/
+# test <- fisher.test(dataframe)
 ```
