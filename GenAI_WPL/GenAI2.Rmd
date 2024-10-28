@@ -1,0 +1,1322 @@
+---
+title: "GenAI2"
+author: "Ellie Jeong"
+date: "2024-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#save graphs in high resolution: https://blog.naver.com/lpko222/221974394856
+library(readr)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(ltm)
+library(psych)
+library(ggplot2)
+library(ggsci)
+library(data.table)
+library(DT)
+library(corrplot)
+library(stringr)
+library(mirt)
+library(reshape2)
+library(tidyverse)
+library(wordcloud)
+library(car)
+library(DescTools)
+library(agricolae)
+library(ggpubr)
+```
+
+## Import and clean data
+
+```{r}
+#Import data
+get_os <- function(){
+  sysinf <- Sys.info()
+  if (!is.null(sysinf)){
+    os <- sysinf['sysname']
+    if (os == 'Darwin')
+      os <- "osx"
+  } else { ## mystery machine
+    os <- .Platform$OS.type
+    if (grepl("^darwin", R.version$os))
+      os <- "osx"
+    if (grepl("linux-gnu", R.version$os))
+      os <- "linux"
+  }
+  tolower(os)
+}
+
+if(get_os() == "osx") {setwd("/Volumes/cbjackson2/usersurvey/_CSCW24/")} else
+{setwd("Z:/usersurvey/_CSCW24/")}
+codebook <- read_csv("codebook.csv",show_col_types = FALSE)
+theme <- read_csv("theme.csv",show_col_types = FALSE)
+
+#rename variables
+#colnames(theme) <- c("code", "theme", "variable")
+codebook <- codebook[-1,]
+colnames(codebook) <- c("ID","level","size","task","method","source","impact","tool","factors","age","gender","ethnicity","education","tasks","actions","rationales","challenges","outcomes")
+
+# #merge melt_data & theme
+# data <- merge(melt_data, theme, by="variable", all.x = TRUE)
+
+#this code does not work data_theme <- merge(melt_data, theme, by.x = c("variable", "value"), by.y = c("variable", "code"))
+
+codebook$level <- replace(codebook$level,codebook$level=="Advanced (senior software developers, 5-10 years, SE???)","advanced")
+codebook$level <- replace(codebook$level,codebook$level=="Beginner (junior developers, 0-2 years, SE???)","beginner")
+codebook$level <- replace(codebook$level,codebook$level=="Senior (senior developers/principal SEs/SE managers, SE???)","senior")
+codebook$level <- replace(codebook$level,codebook$level=="Intermediate (software developers, 2-5 years, SE???)","intermediate")
+
+```
+
+## Descriptive statistics
+  
+  * Age
+
+```{r}
+stats <- codebook[,c(1:13)]
+stats_age <- stats[!is.na(stats$age),]
+# t_age <- datatable(stats_age %>% 
+#                     group_by(Age = age) %>% 
+#                     summarise(Count = n()) %>% 
+#                     arrange(desc(Count)) %>%
+#                     mutate(Freq = round(Count / sum(Count), digits=2)))
+# t_age 
+
+# Create a data frame for charts
+df_age <- stats_age %>%
+  group_by(age) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_age$age <- factor(df_age$age, levels = df_age$age[order(-df_age$freq)])
+
+#bar graph
+b_age <- ggplot(df_age, aes(x = age, y = percent, fill = age)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.5, size = 3.5) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_age
+
+# #Age regrouping??
+# less <- c("1-5 years", "Less than one year")
+# survey_c <- survey_c %>% 
+#   filter(!is.na(Q12)) %>%
+#   mutate(workyears=ifelse(Q12 %in% less, "Less experienced", "Experienced"))
+```
+
+  * Gender
+  
+```{r}
+stats_gender <- stats[!is.na(stats$gender),]
+stats_gender$gender <- replace(stats_gender$gender,stats_gender$gender=="Prefer to self-describe","Nonbinary")
+# Create a data frame for charts
+df_gender <- stats_gender %>%
+  group_by(gender) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_gender$gender <- factor(df_gender$gender, levels = df_gender$gender[order(-df_gender$freq)])
+
+#bar graph
+b_gender <- ggplot(df_gender, aes(x = gender, y = percent, fill = gender)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.5, size = 3.5) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+   theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_gender
+```
+
+  * Ethnicity
+
+```{r}
+stats_eth <- stats[!is.na(stats$ethnicity),]
+stats_eth$ethnicity <- replace(stats_eth$ethnicity,stats_eth$ethnicity=="Prefer not to answer","Multiracial")
+stats_eth$ethnicity <- replace(stats_eth$ethnicity,stats_eth$ethnicity=="Others","Multiracial")
+
+# Create a data frame for charts
+df_eth <- stats_eth %>%
+  group_by(ethnicity) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_eth$ethnicity <- factor(df_eth$ethnicity, levels = df_eth$ethnicity[order(-df_eth$freq)])
+
+#bar graph
+b_eth <- ggplot(df_eth, aes(x = ethnicity, y = percent, fill = ethnicity)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.1, size = 3.2) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_eth
+```
+
+  * Education level
+  
+```{r}
+stats_edu <- stats[!is.na(stats$education),]
+stats_edu <- stats_edu[!(stats_edu$education=="Prefer not to answer"),]
+
+# Create a data frame for charts
+df_edu <- stats_edu %>%
+  group_by(education) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_edu$education <- factor(df_edu$education, levels = df_edu$education[order(-df_edu$freq)])
+
+#bar graph
+b_edu <- ggplot(df_edu, aes(x = education, y = percent, fill = education)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.3, size = 3.2) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_edu
+```
+  * Job title
+  
+```{r}
+stats_title <- stats[!is.na(stats$level),]
+# Create a data frame for charts
+df_title <- stats_title %>%
+  group_by(level) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_title$level <- factor(df_title$level, levels = df_title$level[order(-df_title$freq)])
+
+#bar graph
+b_title <- ggplot(df_title, aes(x = level, y = percent, fill = level)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.3, size = 3.2) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_title
+```
+
+  * Company size
+
+```{r}
+stats_size <- stats[!is.na(stats$size),]
+# Create a data frame for charts
+df_size <- stats_size %>%
+  group_by(size) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq)*100))
+
+df_size$size <- factor(df_size$size, levels = df_size$size[order(-df_size$freq)])
+
+#bar graph
+b_size <- ggplot(df_size, aes(x = size, y = percent, fill = size)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.3, size = 3.2) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_size
+```
+  * Task
+  
+```{r}
+stats_task <- stats[!is.na(stats$task),]
+stats_task <- stats_task %>% separate_rows(task, sep = ",") 
+total_task <- n_distinct(stats_task$ID)
+
+df_task <- stats_task %>%
+  group_by(task) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_task) * 100))
+
+df_task$task <- factor(df_task$task, levels = df_task$task[order(-df_task$freq)])
+
+#bar graph
+b_task <- ggplot(df_task, aes(x = task, y = percent, fill = task)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0, size = 2.3) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_task
+```
+  * Method of learning
+  
+```{r}
+stats_method <- stats[!is.na(stats$method),]
+#stats_method <- stats_method %>% separate_rows(method, sep = ",") 
+#stats_method <- stats_method[!(stats_method$method==" following a specific curriculum"),]
+#stats_method <- stats_method[!(stats_method$method==" sharing knowledge and skills"),]
+
+stats_method$method <- replace(stats_method$method,stats_method$method=="Self-directed learning - independent study where learners set learning goals and materials","Self-directed learning")
+stats_method$method <- replace(stats_method$method,stats_method$method=="Formal training - structured educational programs often led by instructors, following a specific curriculum","Formal training")
+stats_method$method <- replace(stats_method$method,stats_method$method=="Collaborative learning - learning through group interaction, sharing knowledge and skills","Collaborative learning")
+
+total_method <- n_distinct(stats_method$ID)
+
+df_method <- stats_method %>%
+  group_by(method) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_method) * 100))
+
+df_method$method <- factor(df_method$method, levels = df_method$method[order(-df_method$freq)])
+
+#bar graph
+b_method <- ggplot(df_method, aes(x = method, y = percent, fill = method)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.4, size = 3) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_method
+```
+
+  * Sources for workplace learning
+  
+```{r}
+stats_source <- stats[!is.na(stats$source),]
+stats_source <- stats_source %>% separate_rows(source, sep = ",") 
+stats_source$source <- replace(stats_source$source,stats_source$source=="Open E-learning system (Coursera/ LinkedIn Learning)","Open E-learning system")
+stats_source$source <- replace(stats_source$source,stats_source$source=="Digital magazines/ journals/ conference proceedings","Digital publications")
+
+total_source <- n_distinct(stats_source$ID)
+
+df_source <- stats_source %>%
+  group_by(source) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_source) * 100))
+
+df_source$source <- factor(df_source$source, levels = df_source$source[order(-df_source$freq)])
+
+#bar graph
+b_source <- ggplot(df_source, aes(x = source, y = percent, fill = source)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.2, size = 2.5) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_source
+```
+
+```{r}
+#bar graph
+# b_source2 <- ggplot(df_source, aes(x = reorder(source,percent), y = percent, fill = source)) +
+#   geom_bar(stat = "identity", fill="darkblue") +
+#   geom_text(aes(label = paste0(percent, "%")), hjust = -0.2, size = 2.5) +
+#   labs(x = "", y = "", title = "") +
+#   scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+#   theme_minimal() +
+#   theme(legend.position = "none",
+#         axis.text.x = element_text(hjust = 1))+
+#  coord_flip()
+
+b_source2 <- ggplot(df_source, aes(x = reorder(source,percent), y = percent, fill = source)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface="bold") +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 15, face = "bold"),  
+    legend.position = "none",
+    axis.text.x = element_text(size = 15, face = "bold"),  
+    axis.text.y = element_text(size = 15, face = "bold")) +
+  coord_flip()
+b_source2
+ggsave(b_source2, filename="f4.jpg", device="jpg", width = 13, height = 6, dpi = 1200)
+```
+
+  * Impacts of workplace learning
+  
+```{r}
+stats_impact <- stats[!is.na(stats$impact),]
+stats_impact <- stats_impact%>% separate_rows(impact, sep = ",") 
+total_impact <- n_distinct(stats_impact$ID)
+
+df_impact <- stats_impact %>%
+  group_by(impact) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_impact) * 100))
+
+df_impact$impact <- factor(df_impact$impact, levels = df_impact$impact[order(-df_impact$freq)])
+
+#bar graph
+b_impact <- ggplot(df_impact, aes(x = impact, y = percent, fill = impact)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.2, size = 3) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 7.5))
+b_impact
+```
+
+```{r}
+# b_impact2 <- ggplot(df_impact, aes(x = reorder(impact, percent), y = percent, fill = impact)) +
+#   geom_bar(stat = "identity", fill="darkblue") +
+#   geom_text(aes(label = paste0(percent, "%")), hjust = -0.2, size = 4, fontface = "bold") +  # Change vjust to hjust
+#   labs(x = "", y = "", title = "") +
+#   #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+#   scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1), limits = c(0, 85)) +
+#   theme_minimal() +
+#   theme(legend.position = "none",
+#         axis.text.x = element_text(hjust = 1, size = 9)) +
+#   coord_flip()  # This flips the axes
+# b_impact2
+
+b_impact2 <- ggplot(df_impact, aes(x = reorder(impact, percent), y = percent, fill = impact)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface = "bold") +  
+  labs(x = "", y = "", title = "") +
+  #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1), limits = c(0, 85)) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 15, face = "bold"),  
+    legend.position = "none",
+    axis.text.x = element_text(size = 15, face = "bold"),  
+    axis.text.y = element_text(size = 15, face = "bold")) +
+  coord_flip()
+b_impact2
+ggsave(b_impact2, filename="f1.jpg", device="jpg", width = 11, height = 6, dpi = 1200)
+#ggsave("figure_dpi1000.png", dpi=1000, dev='png', height=4.5, width=8.5, units="in")
+```
+  
+  * GenAI tools SEs use for workplace learning
+  
+```{r}
+stats_tool <- stats[!is.na(stats$tool),]
+stats_tool <- stats_tool%>% separate_rows(tool, sep = ",") 
+stats_tool$tool <- replace(stats_tool$tool,stats_tool$tool=="Others (please list)","Others")
+total_tool <- n_distinct(stats_tool$ID)
+
+df_tool <- stats_tool %>%
+  group_by(tool) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_tool) * 100))
+
+df_tool$tool <- factor(df_tool$tool, levels = df_tool$tool[order(-df_tool$freq)])
+
+#bar graph
+b_tool <- ggplot(df_tool, aes(x = tool, y = percent, fill = tool)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.2, size = 2.5) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_tool
+```
+  * Factors SEs consider important for using GenAI in workplace learning
+  
+```{r}
+stats_factor <- stats[!is.na(stats$factors),]
+stats_factor <- stats_factor%>% separate_rows(factors, sep = ",") 
+stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Customization (offering user/context-specific assistance)","Customization")
+stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Safety (technical robustness)","Safety")
+stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Autonomy (human agency)","Autonomy")
+
+n_distinct(stats_factor$ID)
+
+df_factor <- stats_factor %>%
+  group_by(factors) %>%
+  summarise(freq = n_distinct(ID)) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round((freq / total_factor) * 100))
+
+df_factor$factors <- factor(df_factor$factors, levels = df_factor$factors[order(-df_factor$freq)])
+
+#bar graph
+b_factor <- ggplot(df_factor, aes(x = factors, y = percent, fill = factors)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), vjust = -0.5, size = 2.5) +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1))
+b_factor
+```
+```{r}
+# b_factor2 <- ggplot(df_factor, aes(x = reorder(factors, percent), y = percent, fill = factors)) +
+#   geom_bar(stat = "identity", fill="darkblue") +
+#   geom_text(aes(label = paste0(percent, "%")), hjust = -0.5, size = 2.5) +
+#   labs(x = "", y = "", title = "") +
+#   scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+#   theme_minimal() +
+#   theme(legend.position = "none",
+#         axis.text.x = element_text(hjust = 1))+
+#   coord_flip()
+
+b_factor2 <- ggplot(df_factor, aes(x = reorder(factors, percent), y = percent, fill = factors)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface = "bold") +
+  labs(x = "", y = "", title = "") +
+  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 15, face = "bold"),  
+    legend.position = "none",
+    axis.text.x = element_text(size = 15, face = "bold"),  
+    axis.text.y = element_text(size = 15, face = "bold")) +
+  coord_flip()
+b_factor2
+ggsave(b_factor2, filename="f2.jpg", device="jpg", width = 12, height = 6, dpi = 1200)
+```
+
+## Chi-squre test
+  * Job level - method
+  
+```{r}
+#Check expected frequency
+chi_title_method <- table(stats_method$level,stats_method$method)
+chisq.test(chi_title_method)$expected
+
+# #Fisher's exact test 
+# fisher1 <- table(stats_method$level,stats_method$method)
+# fisher.test(fisher1, simulate.p.value = TRUE)
+
+#Chi-square
+stats_method3 <- stats_method[!(stats_method$method=="Others"),]
+stats_method3 <- stats_method3[!(stats_method3$level=="Others"),]
+#stats_method3 <- stats_method3[!(stats_method3$level=="senior"),]
+chi_title_method3 <- table(stats_method3$level,stats_method3$method)
+#chi_title_method
+chisq.test(chi_title_method3)$expected
+chisq.test(chi_title_method3,correct=FALSE)
+
+# Calculate percentage values for each level and method combination
+title_method_t <- stats_method3 %>%
+  group_by(level,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+# n_distinct(stats_method$ID)
+# stats_method_t
+
+# Create a bar chart for each level and method combination
+ggplot(stats_method3,
+       aes(x=level,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats")
+```
+  
+  * Job title - Sources use for workplace learning
+  
+```{r}
+chi_title_source <- table(stats_source$level,stats_source$source)
+chisq.test(chi_title_source)$expected
+
+stats_source3 <- stats_source[!(stats_source$source=="Others"),]
+stats_source3 <- stats_source3[!(stats_source3$level=="Others"),]
+stats_source3 <- stats_source3[!(stats_source3$level=="senior"),]
+chi_title_source <- table(stats_source3$level,stats_source3$source)
+chisq.test(chi_title_source)$expected
+chisq.test(chi_title_source,correct=FALSE)
+
+# # Calculate percentage values for each level and method combination
+# stats_source_t <- stats_source3 %>%
+#   group_by(level,source) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+# 
+# stats_source_t
+# 
+# # Create a bar chart for each level and method combination
+# ggplot(stats_source3,
+#        aes(x=level,
+#            fill=source))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Source used for workplace learning")
+```
+  * Job title - impacts of workplace learning
+  
+```{r}
+stats_impact3 <- stats_impact[!(stats_impact$impact=="Others"),]
+# stats_impact2 <- stats_impact2[!(stats_impact2$level=="Others"),]
+chi_title_impact <- table(stats_impact3$level,stats_impact3$impact)
+#chi_title_impact
+chisq.test(chi_title_impact)$expected
+chisq.test(chi_title_impact,correct=FALSE)
+
+# # Calculate percentage values for each level and impacts combination
+# stats_impact_t <- stats_impact %>%
+#   group_by(level,impact) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+# 
+# # Create a bar chart for each level and method combination
+# ggplot(stats_impact,
+#        aes(x=level,
+#            fill=impact))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Impacts of workplace learning")
+```
+
+  * Job title - GenAI tools used for WL
+  
+```{r}
+stats_tool3 <- stats_tool[!(stats_tool$tool=="Others"),]
+stats_tool3 <- stats_tool3[!(stats_tool3$level=="Others"),]
+stats_tool3 <- stats_tool3[!(stats_tool3$level=="senior"),]
+chi_title_tool <- table(stats_tool3$level,stats_tool3$tool)
+chisq.test(chi_title_impact)$expected
+chisq.test(chi_title_tool,correct=FALSE)
+
+# # Calculate percentage values for each level and impacts combination
+# stats_tool_t <- stats_tool %>%
+#   group_by(level,tool) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+# 
+# # Create a bar chart for each level and method combination
+# ggplot(stats_tool,
+#        aes(x=level,
+#            fill=tool))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "GenAI tool used for workplace learning")
+```
+ * Job title - factors
+ 
+```{r}
+stats_factor3 <- stats_factor[!(stats_factor$factors=="Fairness"),]
+stats_factor3 <- stats_factor3[!(stats_factor3$level=="Others"),]
+stats_factor3 <- stats_factor3[!(stats_factor3$level=="senior"),]
+chi_title_factor <- table(stats_factor3$level,stats_factor3$factors)
+chisq.test(chi_title_factor)$expected
+chisq.test(chi_title_factor,correct=FALSE)
+
+# # Calculate percentage values for each level and impacts combination
+# stats_factor_t <- stats_factor %>%
+#   group_by(level,factors) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+# 
+# stats_factor_t
+# 
+# # Create a bar chart for each level and method combination
+# ggplot(stats_factor,
+#        aes(x=level,
+#            fill=factors))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Factors important for using GenAI")
+```
+  * Company size - method of learning
+  
+```{r}
+chi_size_method <- table(stats_method$size,stats_method$method)
+chisq.test(chi_size_method)$expected
+stats_method4 <- stats_method[!(stats_method$method=="Others"),]
+chi_size_method4 <- table(stats_method4$size,stats_method4$method)
+chisq.test(chi_size_method4)$expected
+chisq.test(chi_size_method4,correct=FALSE)
+
+# Create a bar chart for each size and method combination
+ggplot(stats_method4,
+       aes(x=size,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats") +
+  scale_fill_npg()
+
+# Calculate percentage values for each size and method combination
+size_method_t <- stats_method4 %>%
+  group_by(size,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+``` 
+  * Company size - sources of learning
+
+```{r}
+chi_size_source <- table(stats_source$size,stats_source$source)
+chisq.test(chi_size_source,correct=FALSE)
+
+# # Create a bar chart for each size and method combination
+# ggplot(stats_source,
+#        aes(x=size,
+#            fill=source))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Source of learning")
+# 
+# # Calculate percentage values for each size and method combination
+# size_source_t <- stats_source %>%
+#   group_by(size,source) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+```
+  * Company size - impacts of learning
+
+```{r}
+chi_size_impact <- table(stats_impact$size,stats_impact$impact)
+chisq.test(chi_size_impact,correct=FALSE)
+
+# # Create a bar chart for each size and method combination
+# ggplot(stats_impact,
+#        aes(x=size,
+#            fill=impact))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Impact of workplace learning")
+# 
+# # Calculate percentage values for each size and method combination
+# size_impact_t <- stats_impact %>%
+#   group_by(size,impact) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+```
+ * Company size - GenAI tools
+
+```{r}
+chi_size_tool <- table(stats_tool$size,stats_tool$tool)
+chisq.test(chi_size_tool)$expected
+stats_tool4 <- stats_tool[!(stats_tool$tool=="Others"),]
+stats_tool4 <- stats_tool4[!(stats_tool4$tool=="EvoSuite"),]
+stats_tool4 <- stats_tool4[!(stats_tool4$tool=="Tabnine"),]
+stats_tool4 <- stats_tool4[!(stats_tool4$tool=="Codey"),]
+# stats_tool4 <- stats_tool4[!(stats_tool4$tool=="Sketch2Code"),]
+# stats_tool4 <- stats_tool4[!(stats_tool4$tool=="StarCoder"),]
+chi_size_tool4 <- table(stats_tool4$size,stats_tool4$tool)
+chisq.test(chi_size_tool4)$expected #some expected counts are less than 5, but no more than 20% of the expected counts are less than 5
+chisq.test(chi_size_tool4,correct=FALSE)
+
+# Create a bar chart for each size and method combination
+ggplot(stats_tool4,
+       aes(x=size,
+           fill=tool))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "GenAI tools used for workplace learning")
+
+# Calculate percentage values for each size and method combination
+size_tool_t <- stats_tool4 %>%
+  group_by(size,tool) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+```
+ * Company size - factors
+
+```{r}
+chi_size_factor <- table(stats_factor$size,stats_factor$factors)
+chisq.test(chi_size_factor,correct=FALSE)
+
+# # Create a bar chart for each size and method combination
+# ggplot(stats_factor,
+#        aes(x=size,
+#            fill=factors))+
+#   geom_bar(position='fill')+
+#   coord_flip() +
+#   labs(x = "", y = "", fill = "Factors important for GenAI")
+# 
+# # Calculate percentage values for each size and method combination
+# size_factor_t <- stats_factor %>%
+#   group_by(size,factors) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+```
+  * Task - factors
+
+```{r}
+stats_task2 <- stats_task[,c("ID","task")]
+stats_factor2 <- stats_factor[,c("ID","factors")]
+task_factor <- merge(stats_task2,stats_factor2,by="ID")
+chi_task_factor <- table(task_factor$task,task_factor$factors)
+chisq.test(chi_task_factor,correct=FALSE)
+```
+ 
+  * Task - tools
+
+```{r}
+stats_tool2 <- stats_tool[,c("ID","tool")]
+task_tool <- merge(stats_task2,stats_tool2,by="ID")
+chi_task_tool <- table(task_tool$task,task_tool$tool)
+chisq.test(chi_task_tool,correct=FALSE)
+```
+ 
+  * Task - impacts
+
+```{r}
+stats_impact2 <- stats_impact[,c("ID","impact")]
+task_impact <- merge(stats_task2,stats_impact2,by="ID")
+chi_task_impact <- table(task_impact$task,task_impact$impact)
+chisq.test(chi_task_impact,correct=FALSE)
+```
+ 
+  * Task - source
+
+```{r}
+stats_source2 <- stats_source[,c("ID","source")]
+task_source <- merge(stats_task2,stats_source2,by="ID")
+chi_task_source <- table(task_source$task,task_source$source)
+chisq.test(chi_task_source,correct=FALSE)
+```
+
+  * Task - method
+
+```{r}
+stats_method2 <- stats_method[,c("ID","method")]
+stats_method2$method <- replace(stats_method2$method,stats_method2$method=="Self-directed learning - independent study where learners set learning goals and materials","Self-directed learning")
+stats_method2$method <- replace(stats_method2$method,stats_method2$method=="Formal training - structured educational programs often led by instructors, following a specific curriculum","Formal training")
+stats_method2$method <- replace(stats_method2$method,stats_method2$method=="Collaborative learning - learning through group interaction, sharing knowledge and skills","Collaborative learning")
+
+task_method <- merge(stats_task2,stats_method2,by="ID")
+chi_task_method <- table(task_method$task,task_method$method)
+chisq.test(chi_task_method)$expected #some expected counts are less than 5, but no more than 20% of the expected counts are less than 5 
+
+task_method2 <- task_method[!(task_method$method=="Others"),]
+chi_task_method2 <- table(task_method2$task,task_method2$method)
+chisq.test(chi_task_method2,correct=FALSE)
+
+# Create a bar chart for each size and method combination
+ggplot(task_method2,
+       aes(x=task,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats")
+
+# Calculate percentage values for each size and method combination
+task_method_t <- task_method2 %>%
+  group_by(task,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+```
+
+  * Edu - method
+
+```{r}
+# edu_method <- stats_edu[complete.cases(stats_edu$ID, stats_edu$education), ]
+stats_edu2 <- stats_edu[,c("ID","education")]
+edu_method <- merge(stats_edu2,stats_method2,by="ID")
+chi_edu_method <- table(edu_method$education,edu_method$method)
+chisq.test(chi_edu_method)$expected
+edu_method2 <- edu_method[!(edu_method$method=="Others"),]
+chi_edu_method2 <- table(edu_method2$education,edu_method2$method)
+chisq.test(chi_edu_method2)$expected #no more than 20% of the expected counts are less than 5 
+chisq.test(chi_edu_method2,correct=FALSE)
+
+# Calculate percentage values for each size and method combination
+edu_method_t <- edu_method2 %>%
+  group_by(education,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(edu_method2,
+       aes(x=education,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats")
+```
+ * Edu - source
+
+```{r}
+stats_source2 <- stats_source[,c("ID","source")]
+edu_source <- merge(stats_edu2,stats_source2,by="ID")
+chi_edu_source <- table(edu_source$education,edu_source$source)
+chisq.test(chi_edu_source,correct=FALSE)
+```
+  * Edu - impacts
+
+```{r}
+stats_impact2 <- stats_impact[,c("ID","impact")]
+edu_impact <- merge(stats_edu2,stats_impact2,by="ID")
+chi_edu_impact <- table(edu_impact$education,edu_impact$impact)
+chisq.test(chi_edu_impact,correct=FALSE)
+```
+  * Edu - tools
+
+```{r}
+# edu_tool <- merge(stats_edu2,stats_tool2,by="ID")
+# chi_edu_tool <- table(edu_tool$education,edu_tool$tool)
+# chisq.test(chi_edu_tool)$expected
+
+edu_tool2 <- merge(stats_edu2,stats_tool2,by="ID")
+edu_tool2 <- edu_tool2[!(edu_tool2$tool=="Others"),]
+edu_tool2 <- edu_tool2[!(edu_tool2$tool=="EvoSuite"),]
+edu_tool2 <- edu_tool2[!(edu_tool2$tool=="Tabnine"),]
+edu_tool2 <- edu_tool2[!(edu_tool2$tool=="Codey"),]
+chi_edu_tool2 <- table(edu_tool2$education,edu_tool2$tool)
+chisq.test(chi_edu_tool2)$expected
+chisq.test(chi_edu_tool2,correct=FALSE)
+
+# Calculate percentage values for each size and method combination
+edu_tool_t <- edu_tool2 %>%
+  group_by(education,tool) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(edu_tool2,
+       aes(x=education,
+           fill=tool))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "GenAI tools used for workplace learning")
+```
+
+  * Edu - factor
+
+```{r}
+stats_factor2 <- stats_factor[,c("ID","factors")]
+edu_factor <- merge(stats_edu2,stats_factor2,by="ID")
+chi_edu_factor <- table(edu_factor$education,edu_factor$factor)
+chisq.test(chi_edu_factor,correct=FALSE)
+
+# # Calculate percentage values for each size and method combination
+# edu_tool_t <- edu_tool %>%
+#   group_by(education,tool) %>%
+#   summarise(freq = n()) %>%
+#   arrange(desc(freq)) %>%
+#   mutate(percent = round(freq / sum(freq) * 100))
+```
+
+  * Age - factor
+
+```{r}
+stats_age2 <- stats_age[,c("ID","age")]
+age_factor <- merge(stats_age2,stats_factor2,by="ID")
+chi_age_factor <- table(age_factor$age,age_factor$factor)
+chisq.test(chi_age_factor,correct=FALSE)
+```
+  * Age - tool
+  
+```{r}
+age_tool <- merge(stats_age2,stats_tool2,by="ID")
+chi_age_tool <- table(age_tool$age,age_tool$tool)
+chisq.test(chi_age_tool,correct=FALSE)
+```
+  * Age - impact
+  
+```{r}
+age_impact <- merge(stats_age2,stats_impact2,by="ID")
+chi_age_impact <- table(age_impact$age,age_impact$impact)
+chisq.test(chi_age_impact,correct=FALSE)
+```
+  * Age - source
+  
+```{r}
+age_source <- merge(stats_age2,stats_source2,by="ID")
+chi_age_source <- table(age_source$age,age_source$source)
+chisq.test(chi_age_source,correct=FALSE)
+```
+
+ * Age - method
+  
+```{r}
+age_method <- merge(stats_age2,stats_method2,by="ID")
+
+#old <- c("55-64","65 and over")
+
+age_method <- age_method %>% mutate(age_g=ifelse(age=="25-34", "25-34", ifelse(age=="18-24", "18-24", ifelse(age=="35-44","35-44", "45 and over"))))
+age_method2 <- age_method[!(age_method$method=="Others"),]
+
+chi_age_method <- table(age_method2$age_g,age_method2$method)
+chisq.test(chi_age_method)$expected #no more than 20% of the expected counts are less than 5
+chisq.test(chi_age_method,correct=FALSE) 
+
+n_distinct(age_method2$ID)
+
+# Calculate percentage values for each size and method combination
+age_method_t <- age_method2 %>%
+  group_by(age_g,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(age_method2,
+       aes(x=age_g,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats") +
+  scale_fill_npg()
+```
+ * Gender - method
+  
+```{r}
+stats_gender2 <- stats_gender[,c("ID","gender")]
+gender_method <- merge(stats_gender2,stats_method2,by="ID")
+gender_method2 <- gender_method[!(gender_method$gender=="Nonbinary"),]
+gender_method2 <- gender_method2[!(gender_method2$method=="Others"),]
+chi_gender_method2 <- table(gender_method2$gender,gender_method2$method)
+chisq.test(chi_gender_method2,correct=FALSE)
+
+n_distinct(gender_method2$ID)
+
+# Calculate percentage values for each size and method combination
+gender_method_t <- gender_method2 %>%
+  group_by(gender,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(gender_method2,
+       aes(x=gender,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats")
+```
+
+  * Gender - source
+  
+```{r}
+gender_source <- merge(stats_gender2,stats_source2,by="ID")
+chi_gender_source <- table(gender_source$gender,gender_source$source)
+chisq.test(chi_gender_source,correct=FALSE)
+```
+
+  * Gender - impact
+  
+```{r}
+gender_impact <- merge(stats_gender2,stats_impact2,by="ID")
+chi_gender_impact <- table(gender_impact$gender,gender_impact$impact)
+chisq.test(chi_gender_impact,correct=FALSE)
+```
+
+  * Gender - tool
+  
+```{r}
+gender_tool <- merge(stats_gender2,stats_tool2,by="ID")
+chi_gender_tool <- table(gender_tool$gender,gender_tool$tool)
+chisq.test(chi_gender_tool,correct=FALSE)
+```
+
+ * Gender - factor
+  
+```{r}
+gender_factor <- merge(stats_gender2,stats_factor2,by="ID")
+chi_gender_factor <- table(gender_factor$gender,gender_factor$factor)
+chisq.test(chi_gender_factor,correct=FALSE)
+```
+ 
+ * Ethnicity
+ 
+```{r}
+# Selecting ID and ethnicity from stats_eth dataframe
+stats_eth2 <- stats_eth[, c("ID", "ethnicity")]
+
+# Merging ethnicity with method data
+ethnicity_method <- merge(stats_eth2, stats_method2, by = "ID")
+
+# Creating contingency table for method
+chi_ethnicity_method <- table(ethnicity_method$ethnicity, ethnicity_method$method)
+
+# Merging ethnicity with source data
+ethnicity_source <- merge(stats_eth2, stats_source2, by = "ID")
+
+# Creating contingency table for source
+chi_ethnicity_source <- table(ethnicity_source$ethnicity, ethnicity_source$source)
+
+# Merging ethnicity with impact data
+ethnicity_impact <- merge(stats_eth2, stats_impact2, by = "ID")
+
+# Creating contingency table for impact
+chi_ethnicity_impact <- table(ethnicity_impact$ethnicity, ethnicity_impact$impact)
+
+# Merging ethnicity with tool data
+ethnicity_tool <- merge(stats_eth2, stats_tool2, by = "ID")
+
+# Creating contingency table for tool
+chi_ethnicity_tool <- table(ethnicity_tool$ethnicity, ethnicity_tool$tool)
+
+# Merging ethnicity with factor data
+ethnicity_factor <- merge(stats_eth2, stats_factor2, by = "ID")
+
+# Creating contingency table for factor
+chi_ethnicity_factor <- table(ethnicity_factor$ethnicity, ethnicity_factor$factor)
+
+# Printing chi-square test results for each dependent variable
+print(chisq.test(chi_ethnicity_method, correct = FALSE))
+print(chisq.test(chi_ethnicity_source, correct = FALSE))
+print(chisq.test(chi_ethnicity_impact, correct = FALSE))
+print(chisq.test(chi_ethnicity_tool, correct = FALSE))
+print(chisq.test(chi_ethnicity_factor, correct = FALSE))
+
+```
+ 
+ * Ethnicity - method
+
+```{r}
+# cleaned_df <- df[complete.cases(df$ID, df$Name), ]
+ethnicity_method2 <- ethnicity_method[!(ethnicity_method$method=="Others"),]
+ethnicity_method2 <- ethnicity_method2[!(ethnicity_method2$ethnicity=="Native Hawaiian or Other Pacific Islander"),]
+chi_ethnicity_method2 <- table(ethnicity_method2$ethnicity, ethnicity_method2$method)
+chisq.test(chi_ethnicity_method2)$expected
+chisq.test(chi_ethnicity_method2,correct = FALSE)
+
+n_distinct(ethnicity_method2$ID)
+
+# Calculate percentage values for each size and method combination
+eth_method_t <- ethnicity_method2 %>%
+  group_by(ethnicity,method) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(ethnicity_method2,
+       aes(x=ethnicity,
+           fill=method))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "Workplace learning formats") +
+  scale_fill_npg()
+```
+
+ * Ethnicity - tool
+
+```{r}
+n_distinct(ethnicity_tool$ID)
+
+# Calculate percentage values for each size and method combination
+eth_tool_t <- ethnicity_tool %>%
+  group_by(ethnicity,tool) %>%
+  summarise(freq = n()) %>%
+  arrange(desc(freq)) %>%
+  mutate(percent = round(freq / sum(freq) * 100))
+
+ggplot(ethnicity_tool,
+       aes(x=ethnicity,
+           fill=tool))+
+  geom_bar(position='fill')+
+  coord_flip() +
+  labs(x = "", y = "", fill = "GenAI tools used for workplace learning")
+```
+  
+  * Themes
+  
+```{r}
+#split codebook dataset
+code_theme <- codebook[,c(1,14:18)]
+
+#change the structure of the codetheme dataset - long format
+melt_data <- reshape2::melt(code_theme, id = c("ID"))
+melt_data <- melt_data %>% separate_rows(value, sep = ",")
+melt_data <- melt_data[!(melt_data$value==""),]
+
+#remove spaces in rows & empty rows
+melt_data$value <- str_trim(melt_data$value, side='left')
+melt_data <- melt_data[which(!is.na(melt_data$value)),]
+
+#change colnames of theme
+colnames(theme) <- c("value", "theme", "variable")
+theme$variable <- tolower(theme$variable)
+
+#merge data melt_data & theme
+data <- merge(melt_data, theme, by=c("variable","value"),all.x = TRUE )
+
+#merge data with stats
+data2 <- merge(data, stats, by="ID")
+
+#creating contingency table
+data2 <- data2[!is.na(data2$theme),]
+
+#create a subset of data 
+tasks <- subset(data2,variable=="tasks")
+actions <- subset(data2,variable=="actions")
+rationales <- subset(data2,variable=="rationales")
+challenges <- subset(data2,variable=="challenges")
+outcomes <- subset(data2,variable=="outcomes")
+```
+
+#Factors associated with Tasks 
+
+```{r}
+#tasks-age
+chi_age_theme <- table(tasks$age, tasks$theme)
+print(chisq.test(chi_age_theme, correct = FALSE))
+
+# tasks-level
+chi_level_theme <- table(tasks$level, tasks$theme)
+print(chisq.test(chi_level_theme, correct = FALSE))
+
+# tasks-size
+chi_size_theme <- table(tasks$size, tasks$theme)
+print(chisq.test(chi_size_theme, correct = FALSE))
+
+# tasks-gender
+chi_gender_theme <- table(tasks$gender, tasks$theme)
+print(chisq.test(chi_gender_theme, correct = FALSE))
+
+# tasks-ethnicity
+chi_ethnicity_theme <- table(tasks$ethnicity, tasks$theme)
+print(chisq.test(chi_ethnicity_theme, correct = FALSE))
+
+# tasks-education
+chi_education_theme <- table(tasks$education, tasks$theme)
+print(chisq.test(chi_education_theme, correct = FALSE))
+
+```
+#Factors associated with actions 
+
+```{r}
+# actions-age
+chi_age_actions <- table(actions$age, actions$theme)
+print(chisq.test(chi_age_actions, correct = FALSE))
+
+# actions-level
+chi_level_actions <- table(actions$level, actions$theme)
+print(chisq.test(chi_level_actions, correct = FALSE))
+
+# actions-size
+chi_size_actions <- table(actions$size, actions$theme)
+print(chisq.test(chi_size_actions, correct = FALSE))
+
+# actions-gender
+chi_gender_actions <- table(actions$gender, actions$theme)
+print(chisq.test(chi_gender_actions, correct = FALSE))
+
+# actions-ethnicity
+chi_ethnicity_actions <- table(actions$ethnicity, actions$theme)
+print(chisq.test(chi_ethnicity_actions, correct = FALSE))
+
+# actions-education
+chi_education_actions <- table(actions$education, actions$theme)
+print(chisq.test(chi_education_actions, correct = FALSE))
+
+```
+#Factors associated with rationales
+
+```{r}
+# Rationales for age
+chi_age_theme <- table(rationales$age, rationales$theme)
+print(chisq.test(chi_age_theme, correct = FALSE))
+
+# Rationales for level
+chi_level_theme <- table(rationales$level, rationales$theme)
+print(chisq.test(chi_level_theme, correct = FALSE))
+
+# Rationales for size
+chi_size_theme <- table(rationales$size, rationales$theme)
+print(chisq.test(chi_size_theme, correct = FALSE))
+
+# Rationales for gender
+chi_gender_theme <- table(rationales$gender, rationales$theme)
+print(chisq.test(chi_gender_theme, correct = FALSE))
+
+# Rationales for ethnicity
+chi_ethnicity_theme <- table(rationales$ethnicity, rationales$theme)
+print(chisq.test(chi_ethnicity_theme, correct = FALSE))
+
+# Rationales for education
+chi_education_theme <- table(rationales$education, rationales$theme)
+print(chisq.test(chi_education_theme, correct = FALSE))
+```
+
+#Factors associated with challenges
+
+```{r}
+# challenges-age
+chi_age_theme <- table(challenges$age, challenges$theme)
+print(chisq.test(chi_age_theme, correct = FALSE))
+
+# challenges-level
+chi_level_theme <- table(challenges$level, challenges$theme)
+print(chisq.test(chi_level_theme, correct = FALSE))
+
+# challenges-size
+chi_size_theme <- table(challenges$size, challenges$theme)
+print(chisq.test(chi_size_theme, correct = FALSE))
+
+# challenges-gender
+chi_gender_theme <- table(challenges$gender, challenges$theme)
+print(chisq.test(chi_gender_theme, correct = FALSE))
+
+# challenges-ethnicity
+chi_ethnicity_theme <- table(challenges$ethnicity, challenges$theme)
+print(chisq.test(chi_ethnicity_theme, correct = FALSE))
+
+# challenges-education
+chi_education_theme <- table(challenges$education, challenges$theme)
+print(chisq.test(chi_education_theme, correct = FALSE))
+
+```
+
+#Factors associated with outcomes
+
+```{r}
+# outcomes-age
+chi_age_theme <- table(outcomes$age, outcomes$theme)
+print(chisq.test(chi_age_theme, correct = FALSE))
+
+# outcomes-level
+chi_level_theme <- table(outcomes$level, outcomes$theme)
+print(chisq.test(chi_level_theme, correct = FALSE))
+
+# outcomes-size
+chi_size_theme <- table(outcomes$size, outcomes$theme)
+print(chisq.test(chi_size_theme, correct = FALSE))
+
+# outcomes-gender
+chi_gender_theme <- table(outcomes$gender, outcomes$theme)
+print(chisq.test(chi_gender_theme, correct = FALSE))
+
+# outcomes-ethnicity
+chi_ethnicity_theme <- table(outcomes$ethnicity, outcomes$theme)
+print(chisq.test(chi_ethnicity_theme, correct = FALSE))
+
+# outcomes-education
+chi_education_theme <- table(outcomes$education, outcomes$theme)
+print(chisq.test(chi_education_theme, correct = FALSE))
+
+```
+
