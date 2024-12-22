@@ -1,0 +1,421 @@
+---
+title: "Civic Engagement Survey - Pilot study"
+author: "Ellie Jeong"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    fig_caption: yes
+    highlight: pygments
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_float:
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+always_allow_html: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(psych)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(reshape2)
+
+get_os <- function() {
+  sysinf <- Sys.info()
+  if (!is.null(sysinf)) {
+    os <- sysinf['sysname']
+  } else {
+    os <- .Platform$OS.type
+  }
+  
+  if (grepl("darwin", R.version$os)) os <- "osx"
+  if (grepl("linux-gnu", R.version$os)) os <- "linux"
+  
+  tolower(os)
+}
+
+setwd(if (get_os() == "osx") "Z:/survey_civicTechData/pilot" else "Z:/survey_civicTechData/pilot")
+
+# Import data
+survey <- read.csv("CivicEngagementSurvey_pilot_240929.csv")
+prolific_demo <- read.csv("prolific_demographics.csv")
+census_tract_raw <- read.csv("census_tract.csv")
+
+# Remove redundant headers
+survey <- survey[-c(1,2),]
+options(digits = 3)
+```
+
+## Import data
+
+1.  Qualtrics survey respones
+
+2.  Prolific demographic data
+
+3.  Census tract datasets
+
+## Merge data
+
+### Merge Qualtrics data with Prolific data
+
+-   **50 valid submissions** (timed-out submissions are removed)
+
+```{r, echo = FALSE}
+# Merge Prolific demo
+## Change the column name
+colnames(prolific_demo)[2] <- "PROLIFIC_PID"
+## Merge data
+df_raw <- merge(survey, prolific_demo, by="PROLIFIC_PID", all.x=TRUE)
+```
+
+-   Check the accuracy of the Prolific data
+
+-   Some demographic questions in Qualtrics overlap with Prolific data: **"Age" "Sex (gender)" "Ethnicity.simplified"**
+
+However, there are a few issues
+
+1.  Prolific data is slightly different from that of our survey responses: average age 33.88 (Qualtrics) vs 33.98 (Prolific)
+
+2.  Expired data is included: coded as DATA_EXPIRED, cf. CONSENT_REVOKED means returned submissions).
+
+3.  We don't know what categories are used when collecting demographics: Qualtrics shows Female, Male and Non-binary, but there is no one who identified themselves as non-binary in Prolific data.
+
+**In conclusion, Prolific demographic data is not as accurate as that we collected through our survey.**
+
+```{r}
+## Check the accuracy of the prolific data
+df_raw <- df_raw %>% filter(Status.y=="AWAITING REVIEW")
+df_raw$Q3 <- as.numeric(df_raw$Q3)
+df_raw$Age <- as.numeric(df_raw$Age)
+mean(df_raw$Q3)
+mean(df_raw$Age)
+
+df_raw %>%
+  group_by(Ethnicity.simplified) %>%
+  summarise(
+    Count = n(),
+    Proportion = n() / nrow(df_raw) * 100 
+  )
+```
+
+### Merge Qualtrics data with Census data
+
+-   People in disadvantaged communities: 9
+
+```{r, echo = FALSE}
+# Select necessary columns
+census_tract <- census_tract_raw %>% rename(Q55_4=Census.tract.2010.ID)
+census_tract<- census_tract %>% select(Q55_4,Identified.as.disadvantaged)
+census_tract$Q55_4 <- as.numeric(census_tract$Q55_4)
+df_raw$Q55_4 <- as.numeric(df_raw$Q55_4)
+df_raw <- merge(df_raw,census_tract,by="Q55_4",all.x = TRUE)
+df_raw <- df_raw %>% rename(disadvantaged=Identified.as.disadvantaged)
+df_raw %>%
+  filter(!is.na(disadvantaged)) %>% 
+  group_by(disadvantaged) %>%
+  summarise(
+    Count = n(),
+    Proportion = n() / nrow(filter(df_raw, !is.na(disadvantaged))) * 100)
+```
+
+### Data preparation
+
+-   Disadvantaged communities: dis
+-   Non-disadvantaged communities: non
+-   Entire population: df_raw
+
+```{r}
+dis <- df_raw %>% filter(disadvantaged %in% c("True","Partially"))
+non <- df_raw %>% filter(!(disadvantaged %in% c("True", "Partially")))
+```
+
+## Calculate reliability scores
+
+```{r, echo = FALSE, warning = FALSE}
+# convert scale points into numeric form
+
+## Q14
+likert_14 <- function(column) {
+  column <- replace(column, column == "I have never particiated", 1)
+  column <- replace(column, column == "Infrequently", 2)
+  column <- replace(column, column == "Frequently", 3)
+  return(as.numeric(column))
+}
+
+df <- df_raw %>%
+  mutate_at(vars(Q14_1,Q14_2,Q14_3,Q14_4,Q14_5,Q14_6,Q14_7,Q14_8),likert_14)
+
+## Q19
+likert_19 <- function(column) {
+  column <- replace(column, column == "Yes", 1)
+  column <- replace(column, column == "No", 0)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q19_1,Q19_2,Q19_3,Q19_4,Q19_5,Q19_6,Q19_7),likert_19)
+
+# Q20 - missing data since only people who have used any data answered this question
+likert_20 <- function(column) {
+  column <- replace(column, column == "Not confident", 1)
+  column <- replace(column, column == "Slightly confident", 2)
+  column <- replace(column, column == "Moderately confident", 3)
+  column <- replace(column, column == "Very confident", 4)
+  column <- replace(column, column == "Extremely confident", 5)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q20_1,Q20_2,Q20_3,Q20_4,Q20_5,Q20_6,Q20_7),likert_20)
+
+## Q24
+likert_24 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q24_1,Q24_2,Q24_3,Q24_4,Q24_5),likert_24)
+
+## Q28
+likert_28 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q28_1,Q28_2,Q28_3,Q28_4,Q28_5),likert_28)
+
+## Q29
+likert_29 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q29_1,Q29_2,Q29_3,Q29_4),likert_29)
+
+## Q30
+likert_30 <- function(column) {
+  column <- replace(column, column == "Not at all", 1)
+  column <- replace(column, column == "Concerned", 2)
+  column <- replace(column, column == "Extremely concerned", 3)
+  column <- replace(column, column == "I don't know enough about this issue", 4)
+  return(as.numeric(column))
+}
+
+df <- df %>%
+  mutate_at(vars(Q30_1,Q30_2,Q30_3,Q30_4,Q30_5,Q30_6,Q30_7,Q30_8),likert_30)
+
+```
+
+### Reliability score interpretation
+
+-   Alpha \> 0.9: Excellent reliability.
+
+-   Alpha between 0.8 and 0.9: Good reliability.
+
+-   Alpha between 0.7 and 0.8: Acceptable reliability.
+
+-   Alpha \< 0.7: May indicate poor internal consistency
+
+> Q14. In the past year, how frequently have you been involved in the following types of civic participation activities? **alpha: 0.76 (acceptable)**
+
+```{r, echo = FALSE, warning = FALSE}
+#alpha output interpretation- https://rpubs.com/hauselin/reliabilityanalysis
+Q14 <- df %>% select(Q14_1:Q14_8)
+#Q14 <- df[, c("Q14_1", "Q14_2", "Q14_3", "Q14_4", "Q14_5", "Q14_6", "Q14_7", "Q14_8")]
+Q14_score <- psych::alpha(Q14)
+Q14_score$total
+Q14_score$alpha.drop
+```
+
+> Q19. Have you ever used any of the following data to support your position or argument when engaging in discussions (with friends or more formally) about public policy? **alpha: 0.69 (acceptable)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q19 <- df %>% select(Q19_1:Q19_7)
+Q19_score <- psych::alpha(Q19)
+Q19_score$total
+Q19_score$alpha.drop
+```
+
+> Q20. How confident do you feel about using the data or information you have used? alpha: 0.52 (missing data since only people who have used any data answered this question) **- not correct**
+
+There are too many missing values in the responses for Q20 since only the data types each participant used for civic engagement (asked in Q19) were shown in Q20. In other words, items given for participants to answer varied depending on their responses to Q19. It already caused inconsistency in the data and generated many missing values.
+
+Despite such issues, I tried calculating Cronbach's alpha with pairwise deletion, but the alpha is 0.52 and a warning message popped up saying the matrix is not positive definite. It may be because the dataframe includes too many missing values (218 out of 378) which represents a weird data structure to calculate Cronbach's alpha. Other alternatives are removing incomplete cases or imputing missing values, but I don't think they are the right options since they will lead to severe data loss.
+
+In conclusion, we need to remove the display logic set for Q20 so that all participants can rate the level of their confidence about 7 data types. Otherwise, calculating the reliability score of this question does not make sense.
+
+```{r, echo = FALSE, warning = FALSE}
+Q20 <- df %>% select(Q20_1:Q20_7)
+Q20_score <- psych::alpha(Q20, na.rm=TRUE) #pairwise deletion to handle missing values: calculates correlations for each pair of items that have complete data
+Q20_score$total
+Q20_score$alpha.drop
+```
+
+> Q24. To what extent do you agree with the following statements about data relevant to public policy? **alpha: 0.50 (if "Concerned about privacy and security when using data" is dropped, 0.69)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q24 <- df %>% select(Q24_1:Q24_5)
+Q24_score <- psych::alpha(Q24)
+Q24_score$total
+Q24_score$alpha.drop
+```
+
+> Q24. To what extent do you agree with the following statements about data relevant to public policy? **alpha after dropping "Concerned about privacy and security when using data": 0.69 (acceptable)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q24_rev <- Q24[,-2]
+Q24_rev_score <- psych::alpha(Q24_rev)
+Q24_rev_score$total
+Q24_rev_score$alpha.drop
+```
+
+> Q28. To what extent do you agree with the following statements? **alpha: 0.79 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q28 <- df %>% select(Q28_1:Q28_5)
+Q28_score <- psych::alpha(Q28)
+Q28_score$total
+```
+
+> Q29. To what extent do you agree with the following statements? **alpha: 0.67 (if "Data collection practices in my community are fair and transparent" is dropped, 0.68)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q29 <- df %>% select(Q29_1:Q29_4)
+Q29_score <- psych::alpha(Q29)
+Q29_score$total
+```
+
+> Q29. To what extent do you agree with the following statements? **alpha after dropping "Data collection practices in my community are fair and transparent": 0.68 (acceptable?)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q29_rev <- Q29[,-1]
+Q29_rev_score <- psych::alpha(Q29_rev)
+Q29_rev_score$total
+Q29_rev_score$alpha.drop
+```
+
+> Q30. How concerned are you about the following issues related to data use in civic engagement? **alpha: 0.74 (acceptable)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q30 <- df %>% select(Q30_1:Q30_8)
+Q30_score <- psych::alpha(Q30)
+Q30_score$total
+Q30_score$alpha.drop
+```
+
+## Data Analysis
+### Descriptive statistics
+
+> Q12. Policy issues people care about for their community (frequency, ranking)
+
+> Q13. Motivations for engagement in civic life? (Select all that apply)
+
+```{r}
+dis_14 <- melt(dis, id.vars = "disadvantaged", measure.vars = grep("^Q14_", names(dis), value = TRUE))
+
+
+
+```
+
+> Q14. Frequency of involvement in civic participation activities
+
+```{r}
+#Mean comparison
+melt_14 <- melt(df, id.vars = "disadvantaged", measure.vars = grep("^Q14_", names(dis), value = TRUE))
+# Define a named vector with the new values
+new_values <- c(
+  "Q14_1" = "Local government meetings",
+  "Q14_2" = "Signing a petition",
+  "Q14_3" = "Voluntary activities for a political campaign or advocacy group",
+  "Q14_4" = "Contacting elected officials",
+  "Q14_5" = "Protests or demonstrations",
+  "Q14_6" = "Activities of community organizations focused on social issues",
+  "Q14_7" = "Online civic activities",
+  "Q14_8" = "Voting in local or national elections"
+)
+# Replace values in the 'variable' column
+melt_14 <- melt_14 %>%
+  mutate(variable = recode(variable, !!!new_values))
+
+mean_14 <- melt_14 %>% filter(!is.na(disadvantaged)) %>% group_by(disadvantaged,variable) %>% summarise_all(mean)
+
+mean_14
+
+ggplot(mean_14,aes(x=variable,y=value,fill=disadvantaged))+ 
+  geom_bar(position=position_dodge(0.5), stat = "identity", size=0.5, width=0.6)+ 
+  geom_text(aes(label = sprintf("%.1f", value)),  
+            position = position_dodge(0.5),      
+            vjust = 0.6, hjust = -0.1, size = 3, fontface="bold") + 
+  labs(x = "Civic participation", y = "Frequency", title = "", fill="Disadvantaged") +
+  scale_fill_manual(values = c("darkblue", "lightblue"), 
+                    breaks = c("True", "False")) +
+  #scale_fill_brewer(palette="Blues") + 
+  theme_minimal() +
+  theme(
+  text = element_text(size = 10, face = "bold"),
+  legend.position = "right",
+  axis.text.x = element_text(size = 7, face = "bold"),
+  axis.text.y = element_text(size = 7, face = "bold")) +
+  coord_flip()
+#source: https://statti.tistory.com/25
+
+#Count
+count_14 <- melt_14 %>% filter(!is.na(disadvantaged)) %>% group_by(disadvantaged,variable) %>% summarise(Count=n(),Proportion = n() / nrow(filter(df, !is.na(disadvantaged))) * 100)
+
+count_14
+
+ggplot(count_14,aes(x=variable,y=Count,fill=disadvantaged))+ 
+  geom_bar(position=position_dodge(0.5), stat = "identity", size=0.5, width=0.6)+ 
+  geom_text(aes(label = sprintf("%.1f", Count)),  
+            position = position_dodge(0.5),      
+            vjust = 0.6, hjust = -0.1, size = 3, fontface="bold") + 
+  labs(x = "Civic participation", y = "Count", title = "", fill="Disadvantaged") +
+  scale_fill_manual(values = c("darkblue", "lightblue"), 
+                    breaks = c("True", "False")) +
+  #scale_fill_brewer(palette="Blues") + 
+  theme_minimal() +
+  theme(
+  text = element_text(size = 10, face = "bold"),
+  legend.position = "right",
+  axis.text.x = element_text(size = 7, face = "bold"),
+  axis.text.y = element_text(size = 7, face = "bold")) +
+  coord_flip()
+```
+
+### Anova
+
+```{r}
+#One-way ANOVA
+summary(aov(value~disadvantaged, data=melt_14))
+#Two-way ANOVA
+summary(aov(value~disadvantaged*variable, data=melt_14))
+#statistically significant difference in civic engagement frequency across communities
+#statistically significant difference in civic engagement frequency across activities
+#there’s no statistically significant interaction effect between communities and activities on the frequency rate.
+```
+
