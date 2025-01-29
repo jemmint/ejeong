@@ -1,0 +1,959 @@
+---
+title: "Human value analysis_ver4"
+author: "Ellie Jeong and Corey Jackson"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    fig_caption: yes
+    highlight: pygments
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_float:
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+always_allow_html: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA,  warning = FALSE, message = FALSE)
+```
+
+```{r echo=FALSE}
+# load packages and data
+library(readr)
+library(dplyr)
+library(DT)
+library(tidytext)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(data.table)
+library(tidytext)
+library(entropy)
+library(reshape2)
+library(scales)
+library(dplyr)
+library(tm)
+library(rapport)
+library(knitr)
+library(kableExtra)
+library(corpus)
+library(cowplot)
+library(gridExtra)
+library(caret)
+library(reshape2)
+library(ltm)
+library(psych)
+library(ggsci)
+library(rcompanion)
+library(pROC)
+library(ngram)
+library(urltools)
+library(tidyverse)
+library(readxl)
+library(trend)
+library(data.table)
+library(DT)
+library(ggsci)
+library(HH)
+library(cluster)
+library(factoextra)
+library(imputeTS)
+library(corrplot)
+library(foreign) 
+library(lavaan)
+library(semPlot)
+library(agricolae)
+
+#setwd("C:/Users/hp/Box/Zoo Engagement Survey Pt 2/Data/Human Values Research [Ellie]/Analysis (rmd, html)")
+
+#hv_analysis <- read_csv("values_analysis.csv")
+hv_analysis <- read_csv("/Volumes/cbjackson2/usersurvey/values_analysis.csv") # Imported from cleaned data
+
+```
+
+# Reliability analysis
+
+```{r }
+#completed_responses <- read_csv("completed_responses.csv") # Imported from cleaned data
+completed_responses <- read_csv("/Volumes/cbjackson2/usersurvey/complete_responses.csv") # Imported from cleaned data
+
+```
+
+```{r pvq_setup, include=FALSE,cache=FALSE}
+pvq <- completed_responses[,c(10,91:111)]
+pvq <- pvq[complete.cases(pvq), ] 
+
+BENEVOLENCE <- c("Q60_7","Q60_6")
+UNIVERSALISM <- c("Q60_3","Q60_4","Q60_5")
+SELF_DIRECTION <- c("Q60_2","Q60_1")
+STIMULATION <- c("Q60_13","Q60_12")
+HEDONISM <- c("Q60_15","Q60_14")
+ACHIEVEMENT <- c("Q60_17","Q60_16")
+POWER <- c("Q60_18","Q60_19")
+SECURITY <- c("Q60_21","Q60_20")
+CONFORMITY <- c("Q60_10","Q60_11")
+TRADITION <- c("Q60_9","Q60_8")
+
+SelfTranscendence <- c(BENEVOLENCE,UNIVERSALISM)
+SelfEnhancement  <- c(ACHIEVEMENT,POWER,HEDONISM)
+Opennesstochange <- c(SELF_DIRECTION,STIMULATION)
+Conservation <- c(SECURITY,CONFORMITY,TRADITION)
+
+pvq.m <- melt(pvq, id.vars = "ResponseId")
+pvq.m$OVs <- ifelse(pvq.m$variable %in% BENEVOLENCE,"BENEVOLENCE",
+             ifelse(pvq.m$variable %in% UNIVERSALISM,"UNIVERSALISM",
+             ifelse(pvq.m$variable %in% SELF_DIRECTION,"SELF DIRECTION",
+             ifelse(pvq.m$variable %in% STIMULATION,"STIMULATION",
+             ifelse(pvq.m$variable %in% HEDONISM,"HEDONISM",
+             ifelse(pvq.m$variable %in% ACHIEVEMENT,"ACHIEVEMENT",
+             ifelse(pvq.m$variable %in% POWER,"POWER",
+             ifelse(pvq.m$variable %in% SECURITY,"SECURITY",
+             ifelse(pvq.m$variable %in% CONFORMITY,"CONFORMITY",
+             ifelse(pvq.m$variable %in% TRADITION,"TRADITION",NA
+                ))))))))))
+pvq.m$score <- as.numeric(substring(pvq.m$value, 1, 1))
+
+# cast data for reliability high order
+pvq.reliability <- pvq.m %>%
+    dcast(ResponseId ~ variable, value.var = "score") 
+
+st.reliability <- pvq.reliability[which(names(pvq.reliability) %in% SelfTranscendence)] # capture items for HO constructs
+se.reliability <- pvq.reliability[which(names(pvq.reliability) %in% SelfEnhancement)]
+otc.reliability <- pvq.reliability[which(names(pvq.reliability) %in% Opennesstochange)]
+c.reliability <- pvq.reliability[which(names(pvq.reliability) %in% Conservation)]
+
+pvq.users <- pvq.m %>% 
+  group_by(ResponseId) %>%  
+  summarize(
+    mrat = mean(score)
+  )
+
+pvq.users.values <- pvq.m %>% 
+  group_by(ResponseId,OVs) %>%  
+  summarize(
+    score = mean(score)
+  )
+
+pvq.values <- pvq.m %>% 
+  group_by(OVs) %>%  
+  summarize(
+    score = mean(score)
+    )
+
+pvq.values <- pvq.m %>% 
+  group_by(OVs) %>%  
+  summarize(
+    score = sd(score)
+    )
+
+#col=c("#E94E1B", "#F7AA4E", "#BEBEBE", "#6193CE", "#00508C")
+pvq.users.values <- merge(pvq.users.values,pvq.users, by=c("ResponseId"))
+pvq.users.values$final_score <- pvq.users.values$score - pvq.users.values$mrat
+
+pvq.values.viz <- ggplot(pvq.users.values, aes(x = reorder(OVs, -score), y=score)) + 
+     geom_violin(trim=FALSE)  + coord_flip() + theme_minimal() + labs(x="PVQ Category",y="Mean Score") +  theme(legend.position="none",legend.text = element_text(size=7),legend.key.size = unit(.5,"line")) +       
+   #scale_fill_brewer(palette="PRGn")
+   scale_fill_aaas()  + theme(complete = F) 
+
+
+pvq.values.viz <- pvq.values.viz + stat_summary(fun.data=mean_sdl, 
+                 geom="pointrange", color="#00508C")
+                 # + scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))
+
+
+hopvq.m <- melt(pvq, id.vars = "ResponseId")
+
+hopvq.m$OVs <- ifelse(hopvq.m$variable %in% SelfTranscendence,"Self-Transcendence",
+             ifelse(hopvq.m$variable %in% SelfEnhancement,"Self-Enhancement",
+             ifelse(hopvq.m$variable %in% Opennesstochange,"Openness to change",
+             ifelse(hopvq.m$variable %in% Conservation,"Conservation",NA
+                ))))
+hopvq.m$score <- as.numeric(substring(hopvq.m$value, 1, 1))
+
+
+hopvq.users <- hopvq.m %>% 
+  group_by(ResponseId) %>%  
+  summarize(
+    mrat = mean(score)
+  )
+
+hopvq.users.values <- hopvq.m %>% 
+  group_by(ResponseId,OVs) %>%  
+  summarize(
+    score = mean(score)
+  )
+
+hopvq.values <- hopvq.m %>% 
+  group_by(OVs) %>%  
+  summarize(
+    score = mean(score)
+    )
+
+hopvq.values <- hopvq.m %>% 
+  group_by(OVs) %>%  
+  summarize(
+    score = sd(score)
+    )
+
+
+#col=c("#E94E1B", "#F7AA4E", "#BEBEBE", "#6193CE", "#00508C")
+
+hopvq.users.values <- merge(hopvq.users.values,hopvq.users, by=c("ResponseId"))
+hopvq.users.values$final_score <- hopvq.users.values$score - hopvq.users.values$mrat
+
+ hopvq.values.viz <- ggplot(hopvq.users.values, aes(x = reorder(OVs, -score), y=score)) + 
+     geom_violin(trim=FALSE)  + coord_flip() + theme_minimal() + labs(x="PVQ Category",y="Mean Score") +  theme(legend.position="none",legend.text = element_text(size=7),legend.key.size = unit(.5,"line")) +       
+   #scale_fill_brewer(palette="PRGn")
+   scale_fill_aaas()  + theme(complete = F) 
+
+hopvq.values.viz <- hopvq.values.viz + stat_summary(fun.data=mean_sdl, 
+                 geom="pointrange", color="#00508C")
+                 # + scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))
+```
+
+Literature on the PVQ 
+  - [A Proposal for Measuring Value Orientations across Nations ](https://www.europeansocialsurvey.org/docs/methodology/core_ess_questionnaire/ESS_core_questionnaire_human_values.pdf)
+  
+  **Q: Below are some statements that describe a person. Read them carefully and respond to how each statement resonates with you as a person. Rate your responses on a scale of 1-6, where ‘1’ means ‘very much like me,’ and ‘6’ implies ‘not at all like me.**
+
+## Method
+
+
+## Results for the Portrait Values Questionnaire (PVQ)
+
+```{r}
+datatable(pvq.users.values[1:40,])
+```
+
+### Reliability analysis
+
+
+#### Reliability for self-transcendence
+```{r}
+psych::alpha(st.reliability)
+```
+
+#### Reliability for self- enhancement
+```{r}
+psych::alpha(se.reliability)
+```
+
+#### Reliability for openness to change
+
+```{r}
+psych::alpha(otc.reliability)
+```
+
+#### Reliability for conservativeness
+```{r}
+psych::alpha(c.reliability)
+```
+
+### PVQ Results
+```{r}
+pvq.values.viz
+```
+
+```{r}
+hopvq.values.viz
+```
+
+# Human value prioritization: Descriptive statistics
+
+Prioritize 10 Human Values of different demographic groups (gender/age/ethnicity/education level/income level)
+
+## Gender
+
+```{r pressure3}
+hv_gender <- hv_analysis %>%
+  group_by(Gender_Select) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_mean, na.rm = TRUE), 
+            BENEVOLENCE = mean(BENEVOLENCE_mean, na.rm = TRUE), 
+            CONFORMITY = mean(CONFORMITY_mean, na.rm = TRUE), 
+            HEDONISM = mean(HEDONISM_mean, na.rm = TRUE), 
+            POWER = mean(POWER_mean, na.rm = TRUE), 
+            SECURITY = mean(SECURITY_mean, na.rm = TRUE), 
+            SELF_DIRECTION = mean(`SELF DIRECTION_mean`, na.rm = TRUE), 
+            STIMULATION = mean(STIMULATION_mean, na.rm = TRUE), 
+            TRADITION = mean(TRADITION_mean, na.rm = TRUE), 
+            UNIVERSALISM = mean(UNIVERSALISM_mean, na.rm = TRUE))
+
+
+hv_gender <- as.data.frame(hv_gender)
+hv_gender_rev <- t(hv_gender)
+hv_gender_rev <- hv_gender_rev[-1,]
+hv_gender_rev <- hv_gender_rev[,c(1,2)]
+colnames(hv_gender_rev) <- c("Female", "Male")
+hv_gender_rev <- as.data.frame(hv_gender_rev)
+hv_gender_rev$Female <- as.numeric(hv_gender_rev$Female)
+hv_gender_rev$Male <- as.numeric(hv_gender_rev$Male)
+```
+ * Top 3 values of female group: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of male group: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Values in lower ranks for both groups: POWER < TRADITION < UNIVERSALISM
+```{r pressure2}
+#Gender count table
+t_gender <- datatable(hv_analysis %>%  
+                        filter (Gender_Select != "NA") %>%
+                        group_by(Gender_Select) %>% 
+                        tally() %>% 
+                        arrange(desc(n)) %>%
+                        mutate(freq = round(n / sum(n),digits=2)))
+t_gender
+#Gender bar graph
+bar_gender_F <- ggplot(hv_gender_rev, aes(x=reorder(rownames(hv_gender_rev),-Female), y=Female))+geom_bar(stat="identity", fill="red")+xlab("Human values")+ylab("Mean")+ggtitle("Female human value prioritization") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))  
+bar_gender_F
+bar_gender_M <- ggplot(hv_gender_rev, aes(x=reorder(rownames(hv_gender_rev),-Male), y=Male))+geom_bar(stat="identity", fill="blue")+xlab("Human values")+ylab("Mean")+ggtitle("Male human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_gender_M
+```
+
+## Age
+ * Age groups are created according to the below criteria
+    + Young: 18~39
+    + Middle-aged: 40~65
+    + Old: 66~99
+ 
+```{r}
+#Age
+hv_age <- hv_analysis %>% 
+  mutate(Age_g=ifelse(Age<40, "Young", 
+                        ifelse(Age<66, "Middle", "Old")))
+hv_age2 <- hv_age %>%
+  group_by(Age_g) %>%
+   summarise(ACHIEVEMENT = mean(ACHIEVEMENT_mean, na.rm = TRUE), 
+            BENEVOLENCE = mean(BENEVOLENCE_mean, na.rm = TRUE), 
+            CONFORMITY = mean(CONFORMITY_mean, na.rm = TRUE), 
+            HEDONISM = mean(HEDONISM_mean, na.rm = TRUE), 
+            POWER = mean(POWER_mean, na.rm = TRUE), 
+            SECURITY = mean(SECURITY_mean, na.rm = TRUE), 
+            SELF_DIRECTION = mean(`SELF DIRECTION_mean`, na.rm = TRUE), 
+            STIMULATION = mean(STIMULATION_mean, na.rm = TRUE), 
+            TRADITION = mean(TRADITION_mean, na.rm = TRUE), 
+            UNIVERSALISM = mean(UNIVERSALISM_mean, na.rm = TRUE))%>% 
+  filter(Age_g != "NA")
+hv_age_rev <- t(hv_age2)
+hv_age_rev <- hv_age_rev[-1,]
+colnames(hv_age_rev) <- c("Middle", "Old", "Young")
+hv_age_rev <- as.data.frame(hv_age_rev)
+hv_age_rev$Middle <- as.numeric(hv_age_rev$Middle)
+hv_age_rev$Old <- as.numeric(hv_age_rev$Old)
+hv_age_rev$Young <- as.numeric(hv_age_rev$Young)
+
+hv_all <- merge(hv_age_rev,hv_gender_rev, by='row.names', all = TRUE)
+```
+ * Top 3 values of young people: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of middle-aged people: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of old people: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Age count table
+t_age <- datatable(hv_age %>%  
+                     filter (Age_g != "NA") %>%
+                     group_by(Age_g) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_age
+#Age bar graph
+bar_age_Y <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Young), y=Young))+geom_bar(stat="identity", fill="#D55E00")+xlab("Human values")+ylab("Mean")+ggtitle("Young group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_Y
+bar_age_M <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Middle), y=Middle))+geom_bar(stat="identity", fill="#0072B2")+xlab("Human values")+ylab("Mean")+ggtitle("Middle-aged group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_M
+bar_age_O <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Old), y=Old))+geom_bar(stat="identity", fill="#CC79A7")+xlab("Human values")+ylab("Mean")+ggtitle("Old group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_O
+```
+
+## Ethnicity
+
+```{r}
+hv_eth <- hv_analysis %>% filter(Ethnicity_Select %in% c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)") )
+hv_eth2 <- hv_eth %>%
+  group_by(Ethnicity_Select) %>%
+   summarise(ACHIEVEMENT = mean(ACHIEVEMENT_mean, na.rm = TRUE), 
+            BENEVOLENCE = mean(BENEVOLENCE_mean, na.rm = TRUE), 
+            CONFORMITY = mean(CONFORMITY_mean, na.rm = TRUE), 
+            HEDONISM = mean(HEDONISM_mean, na.rm = TRUE), 
+            POWER = mean(POWER_mean, na.rm = TRUE), 
+            SECURITY = mean(SECURITY_mean, na.rm = TRUE), 
+            SELF_DIRECTION = mean(`SELF DIRECTION_mean`, na.rm = TRUE), 
+            STIMULATION = mean(STIMULATION_mean, na.rm = TRUE), 
+            TRADITION = mean(TRADITION_mean, na.rm = TRUE), 
+            UNIVERSALISM = mean(UNIVERSALISM_mean, na.rm = TRUE))
+
+hv_eth_rev <- t(hv_eth2)
+hv_eth_rev <- hv_eth_rev[-1,]
+hv_eth_rev <- as.data.frame(hv_eth_rev)
+colnames(hv_eth_rev) <- c("Asian", "Black", "Hispanic", "White")
+hv_eth_rev$Asian <- as.numeric(hv_eth_rev$Asian)
+hv_eth_rev$Black <- as.numeric(hv_eth_rev$Black)
+hv_eth_rev$Hispanic <- as.numeric(hv_eth_rev$Hispanic)
+hv_eth_rev$White <- as.numeric(hv_eth_rev$White)
+
+
+```
+ * Top 3 values of Asian: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of Black: ACHIEVEMENT > BENEVOLENCE > SECURITY
+ * Top 3 values of Hispanic/Latino/Spanish origin: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of White: ACHIEVEMENT > SECURITY > SELF-DIRECTION
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Ethnicity count table
+t_eth <- datatable(hv_analysis %>%  
+                     filter (Ethnicity_Select %in% c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)") ) %>%
+                     group_by(Ethnicity_Select) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_eth
+#Ethnicity bar graph
+bar_eth_A <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Asian), y=Asian))+geom_bar(stat="identity", fill="#E69F00")+xlab("Human values")+ylab("Mean")+ggtitle("Asian group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_A
+bar_eth_B <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Black), y=Black))+geom_bar(stat="identity", fill="#56B4E9")+xlab("Human values")+ylab("Mean")+ggtitle("Black group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_B
+bar_eth_H <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Hispanic), y=Hispanic))+geom_bar(stat="identity", fill="#009E73")+xlab("Human values")+ylab("Mean")+ggtitle("Hispanic group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_H
+bar_eth_W <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-White), y=White))+geom_bar(stat="identity", fill="#F0E442")+xlab("Human values")+ylab("Mean")+ggtitle("White group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_W
+```
+
+## Education level
+ * Education level groups are created according to the below criteria
+    + Less than high school group: early childhood education, primary education
+    + High school education group: lower secondary, upper secondary
+    + College education group: post-secondary non-tertiary, Short-cycle tertiary education 
+    + Advanced degree group: bachelor's, master's, doctoral
+
+```{r}
+#Education level
+hv_edu <- hv_analysis %>% filter(SchoolHighestEdu !="NA")
+hv_edu <- hv_edu %>% filter(SchoolHighestEdu !="Prefer not to answer")
+hv_edu <- hv_edu %>% mutate(Edu_g=ifelse(SchoolHighestEdu == c("Early childhood Education","Primary education"), "LessThanHighSchool",
+        ifelse(SchoolHighestEdu == c("Upper secondary education", "Lower secondary education"),"HighSchoolEducation",
+                      ifelse(SchoolHighestEdu == c("Post-secondary non-tertiary education", "Short-cycle tertiary education, e.g. vocational program"),"CollegeEducation", "AdvancedDegree"
+                             ))))
+
+hv_edu2 <- hv_edu %>%
+  group_by(Edu_g) %>%
+   summarise(ACHIEVEMENT = mean(ACHIEVEMENT_mean, na.rm = TRUE), 
+            BENEVOLENCE = mean(BENEVOLENCE_mean, na.rm = TRUE), 
+            CONFORMITY = mean(CONFORMITY_mean, na.rm = TRUE), 
+            HEDONISM = mean(HEDONISM_mean, na.rm = TRUE), 
+            POWER = mean(POWER_mean, na.rm = TRUE), 
+            SECURITY = mean(SECURITY_mean, na.rm = TRUE), 
+            SELF_DIRECTION = mean(`SELF DIRECTION_mean`, na.rm = TRUE), 
+            STIMULATION = mean(STIMULATION_mean, na.rm = TRUE), 
+            TRADITION = mean(TRADITION_mean, na.rm = TRUE), 
+            UNIVERSALISM = mean(UNIVERSALISM_mean, na.rm = TRUE))
+
+hv_edu_rev <- t(hv_edu2)
+hv_edu_rev <- hv_edu_rev[-1,]
+hv_edu_rev <- as.data.frame(hv_edu_rev)
+colnames(hv_edu_rev) <- c("AdvancedDegree", "CollegeEducation", "HighSchoolEducation", "LessThanHighSchool")
+hv_edu_rev$AdvancedDegree <- as.numeric(hv_edu_rev$AdvancedDegree)
+hv_edu_rev$CollegeEducation <- as.numeric(hv_edu_rev$CollegeEducation)
+hv_edu_rev$HighSchoolEducation <- as.numeric(hv_edu_rev$HighSchoolEducation)
+hv_edu_rev$LessThanHighSchool <- as.numeric(hv_edu_rev$LessThanHighSchool)
+
+hv_all2 <- merge(hv_eth_rev,hv_edu_rev, by='row.names', all = TRUE)
+
+```
+
+ * Top 3 values of Less than high school: SELF-DIRECTION > SECURITY > ACHIEVEMENT 
+ * Top 3 values of High school education: SELF-DIRECTION > ACHIEVEMENT > HEDONISM
+ * Top 3 values of College education: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of Advanced degree: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Values in lower ranks for all age groups: POWER/ TRADITION/ UNIVERSALISM
+ 
+```{r}
+#Education level count table
+t_edu <- datatable(hv_edu %>%  
+                     filter (Edu_g != "NA") %>%
+                     group_by(Edu_g) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_edu
+#Education bar graph
+bar_edu_L <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-LessThanHighSchool), y=LessThanHighSchool))+geom_bar(stat="identity", fill="#CC79A7")+xlab("Human values")+ylab("Mean")+ggtitle("Less than high school education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_L
+bar_edu_H <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-HighSchoolEducation), y=HighSchoolEducation))+geom_bar(stat="identity", fill="#D55E00")+xlab("Human values")+ylab("Mean")+ggtitle("High school education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_H
+bar_edu_C <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-CollegeEducation), y=CollegeEducation))+geom_bar(stat="identity", fill="#0072B2")+xlab("Human values")+ylab("Mean")+ggtitle("College education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_C
+bar_edu_A <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-AdvancedDegree), y=AdvancedDegree))+geom_bar(stat="identity", fill="#E69F00")+xlab("Human values")+ylab("Mean")+ggtitle("Advanced degree group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_A
+
+```
+
+## Income level
+ * Income level groups are created according to the below criteria
+    + Low: less than $1,000-$2,999 
+    + Middle: $3,000-$4,999
+    + High: $5,000 or more
+
+```{r}
+hv_income <- hv_analysis %>% filter(Income !="NA")
+hv_income <- hv_income %>% filter(Income !="Prefer not to answer")
+hv_income <- hv_income %>% mutate(Income_g=ifelse(Income == c("Less than $1,000","$1,000 to $1,999","$2,000 to $2,999" ), "Low",
+                                         ifelse(Income == c("$3,000 to $3,999", "$4,000 to $4,999"),"Middle","High")))
+```
+ * Top 3 values of high income group: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of middle income group: SECURITY > ACHIEVEMENT > SELF-DIRECTION
+ * Top 3 values of low income group: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Income level count table
+hv_income2 <- hv_income %>%
+  group_by(Income_g) %>%
+   summarise(ACHIEVEMENT = mean(ACHIEVEMENT_mean, na.rm = TRUE), 
+            BENEVOLENCE = mean(BENEVOLENCE_mean, na.rm = TRUE), 
+            CONFORMITY = mean(CONFORMITY_mean, na.rm = TRUE), 
+            HEDONISM = mean(HEDONISM_mean, na.rm = TRUE), 
+            POWER = mean(POWER_mean, na.rm = TRUE), 
+            SECURITY = mean(SECURITY_mean, na.rm = TRUE), 
+            SELF_DIRECTION = mean(`SELF DIRECTION_mean`, na.rm = TRUE), 
+            STIMULATION = mean(STIMULATION_mean, na.rm = TRUE), 
+            TRADITION = mean(TRADITION_mean, na.rm = TRUE), 
+            UNIVERSALISM = mean(UNIVERSALISM_mean, na.rm = TRUE))
+
+hv_income_rev <- t(hv_income2)
+hv_income_rev <- hv_income_rev[-1,]
+hv_income_rev <- as.data.frame(hv_income_rev)
+colnames(hv_income_rev) <- c("High", "Low", "Middle")
+hv_income_rev$High <- as.numeric(hv_income_rev$High)
+hv_income_rev$Low <- as.numeric(hv_income_rev$Low)
+hv_income_rev$Middle <- as.numeric(hv_income_rev$Middle)
+t_income <- datatable(hv_income %>%  
+            filter (Income_g != "NA") %>%
+            group_by(Income_g) %>% 
+            tally() %>% 
+            arrange(desc(n)) %>%
+            mutate(freq = round(n / sum(n),digits=2)))
+t_income
+
+#Income bar graph
+bar_income_H <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-High), y=High))+geom_bar(stat="identity", fill="lightblue")+xlab("Human values")+ylab("Mean")+ggtitle("High income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_H
+bar_income_M <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-Middle), y=Middle))+geom_bar(stat="identity", fill="lightgreen")+xlab("Human values")+ylab("Mean")+ggtitle("Middle income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_M
+bar_income_L <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-Low), y=Low))+geom_bar(stat="identity", fill="pink")+xlab("Human values")+ylab("Mean")+ggtitle("Low income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_L
+
+names(hv_all)[1] <- "value"
+names(hv_all2)[1] <- "value"
+
+hv_income_rev$value <- rownames(hv_income_rev)
+
+hv_all <- merge(hv_all,hv_all2, by = "value")
+hv_all <- merge(hv_all,hv_income_rev, by = "value")
+```
+
+# ANOVA & TukeyHSD test 
+ * ANOVA: When there are three or more independent groups, we apply a one-way ANOVA to see if there is a significant difference.The p-value for one-way ANOVA is less than 0.05 indicate that at least one of the treatment groups differs from the others.
+
+ * TukeyHSD test: The Tukey HSD test is a post hoc multiple comparison test which allows for all possible pairwise comparisons while keeping the family-wise error rate low. P-value less than 0.05 means the difference between the pairs is statistically significant.
+ 
+## Gender: there are only two independent groups (male, female). Thus, this variable cannot be tested using one-way ANOVA model
+
+## Age
+ * ANOVA & TukeyHSD test: All values are influenced by age
+ 
+```{r}
+# Data cleaning 
+hv_mean2 <- hv_age[,c(2,4,6,7,10,12,13:40,61)]
+names(hv_mean2)[25:35] <- c("ACHIEVEMENT", "BENEVOLENCE", "CONFORMITY", "HEDONISM", "POWER", "SECURITY", "SELF_DIRECTION", "STIMULATION", "TRADITION", "UNIVERSALISM", "group")
+hv_complete_a2 <- complete.cases(hv_mean2[, 1:35])
+hv_final_age <- hv_mean2[hv_complete_a2, 1:35]
+
+# ANOVA analysis
+anova_age_hed <- aov(HEDONISM ~ group, data = hv_final_age)
+summary(anova_age_hed)
+anova_age_sel <- aov(SELF_DIRECTION ~ group, data = hv_final_age)
+summary(anova_age_sel)
+anova_age_sti <- aov(STIMULATION ~ group, data = hv_final_age)
+summary(anova_age_sti)
+anova_age_sec <- aov(SECURITY ~ group, data = hv_final_age)
+summary(anova_age_sec)
+anova_age_con <- aov(CONFORMITY ~ group, data = hv_final_age)
+summary(anova_age_con)
+anova_age_tra <- aov(TRADITION ~ group, data = hv_final_age)
+summary(anova_age_tra)
+anova_age_ach <- aov(ACHIEVEMENT ~ group, data = hv_final_age)
+summary(anova_age_ach)
+anova_age_pow <- aov(POWER ~ group, data = hv_final_age)
+summary(anova_age_pow)
+anova_age_uni <- aov(UNIVERSALISM ~ group, data = hv_final_age)
+summary(anova_age_uni)
+anova_age_ben <- aov(BENEVOLENCE ~ group, data = hv_final_age)
+summary(anova_age_ben)
+
+#TukeyHSD test
+TukeyHSD(anova_age_hed,conf.level=.95)
+plot(TukeyHSD(anova_age_hed, conf.level=.95), las = 2)
+TukeyHSD(anova_age_sel,conf.level=.95)
+plot(TukeyHSD(anova_age_sel, conf.level=.95), las = 2)
+TukeyHSD(anova_age_sti,conf.level=.95)
+plot(TukeyHSD(anova_age_sti, conf.level=.95), las = 2)
+TukeyHSD(anova_age_sec,conf.level=.95)
+plot(TukeyHSD(anova_age_sec, conf.level=.95), las = 2)
+TukeyHSD(anova_age_con,conf.level=.95)
+plot(TukeyHSD(anova_age_con, conf.level=.95), las = 2)
+TukeyHSD(anova_age_tra,conf.level=.95)
+plot(TukeyHSD(anova_age_tra, conf.level=.95), las = 2)
+TukeyHSD(anova_age_ach,conf.level=.95)
+plot(TukeyHSD(anova_age_ach, conf.level=.95), las = 2)
+TukeyHSD(anova_age_pow,conf.level=.95)
+plot(TukeyHSD(anova_age_pow, conf.level=.95), las = 2)
+TukeyHSD(anova_age_uni,conf.level=.95)
+plot(TukeyHSD(anova_age_uni, conf.level=.95), las = 2)
+TukeyHSD(anova_age_ben,conf.level=.95)
+plot(TukeyHSD(anova_age_ben, conf.level=.95), las = 2)
+```
+
+## Ethnicity
+ * ANOVA & TukeyHSD test: Except HEDONISM, TRADITION, and BENEVOLENCE, all values are influenced by ethnicity
+
+```{r}
+#Data cleaning
+hv_eth_a <- hv_analysis %>% filter(Ethnicity_Select %in% c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)") )
+hv_mean_eth <- hv_eth_a[,c(2,4,6,7,10,12,13:40)]
+names(hv_mean_eth)[21:30] <- c("ACHIEVEMENT", "BENEVOLENCE", "CONFORMITY", "HEDONISM", "POWER", "SECURITY", "SELF_DIRECTION", "STIMULATION", "TRADITION", "UNIVERSALISM")
+hv_complete_eth <- complete.cases(hv_mean_eth [, 1:30])
+hv_final_eth <- hv_mean_eth[hv_complete_eth, 1:30]
+hv_final_eth <- hv_final_eth %>% mutate(Ethnicity_Select_g=ifelse(Ethnicity_Select == "White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","White",
+                                         ifelse(Ethnicity_Select == "Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Asian",
+                                                ifelse(Ethnicity_Select == "Black (A person having origins in any of the black racial groups of Africa.)","Black", "Hispanic"
+                                                ))))
+
+#ANOVA
+anova_eth_hed <- aov(HEDONISM ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_hed)
+anova_eth_sel <- aov(SELF_DIRECTION ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_sel)
+anova_eth_sti <- aov(STIMULATION ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_sti)
+anova_eth_sec <- aov(SECURITY ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_sec)
+anova_eth_con <- aov(CONFORMITY ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_con)
+anova_eth_tra <- aov(TRADITION ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_tra)
+anova_eth_ach <- aov(ACHIEVEMENT ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_ach)
+anova_eth_pow <- aov(POWER ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_pow)
+anova_eth_uni <- aov(UNIVERSALISM ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_uni)
+anova_eth_ben <- aov(BENEVOLENCE ~ Ethnicity_Select_g, data = hv_final_eth)
+summary(anova_eth_ben)
+
+#TukeyHSD test
+TukeyHSD(anova_eth_hed,conf.level=.95)
+plot(TukeyHSD(anova_eth_hed, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_sel,conf.level=.95)
+plot(TukeyHSD(anova_eth_sel, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_sti,conf.level=.95)
+plot(TukeyHSD(anova_eth_sti, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_sec,conf.level=.95)
+plot(TukeyHSD(anova_eth_sec, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_con,conf.level=.95)
+plot(TukeyHSD(anova_eth_con, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_tra,conf.level=.95)
+plot(TukeyHSD(anova_eth_tra, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_ach,conf.level=.95)
+plot(TukeyHSD(anova_eth_ach, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_pow,conf.level=.95)
+plot(TukeyHSD(anova_eth_pow, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_uni,conf.level=.95)
+plot(TukeyHSD(anova_eth_uni, conf.level=.95), las = 2)
+TukeyHSD(anova_eth_ben,conf.level=.95)
+plot(TukeyHSD(anova_eth_ben, conf.level=.95), las = 2)
+```
+
+## Education level
+ * ANOVA: TRADITION, STIMULATION, SELF-DIRECTION are influenced by education level.
+ * TukeyHSD test: STIMULATION, SELF-DIRECTION are influenced by education level.
+
+```{r}
+#Data cleaning
+hv_mean3 <- hv_edu[,c(2,4,6,7,10,12,13:40,61)]
+names(hv_mean3)[25:35] <- c("ACHIEVEMENT", "BENEVOLENCE", "CONFORMITY", "HEDONISM", "POWER", "SECURITY", "SELF_DIRECTION", "STIMULATION", "TRADITION", "UNIVERSALISM", "group")
+hv_complete_a3 <- complete.cases(hv_mean3[, 1:35])
+hv_final_edu <- hv_mean3[hv_complete_a3, 1:35]
+
+#ANOVA
+anova_edu_hed <- aov(HEDONISM ~ group, data = hv_final_edu)
+summary(anova_edu_hed)
+anova_edu_sel <- aov(SELF_DIRECTION ~ group, data = hv_final_edu)
+summary(anova_edu_sel)
+anova_edu_sti <- aov(STIMULATION ~ group, data = hv_final_edu)
+summary(anova_edu_sti)
+anova_edu_sec <- aov(SECURITY ~ group, data = hv_final_edu)
+summary(anova_edu_sec)
+anova_edu_con <- aov(CONFORMITY ~ group, data = hv_final_edu)
+summary(anova_edu_con)
+anova_edu_tra <- aov(TRADITION ~ group, data = hv_final_edu)
+summary(anova_edu_tra)
+anova_edu_ach <- aov(ACHIEVEMENT ~ group, data = hv_final_edu)
+summary(anova_edu_ach)
+anova_edu_pow <- aov(POWER ~ group, data = hv_final_edu)
+summary(anova_edu_pow)
+anova_edu_uni <- aov(UNIVERSALISM ~ group, data = hv_final_edu)
+summary(anova_edu_uni)
+anova_edu_ben <- aov(BENEVOLENCE ~ group, data = hv_final_edu)
+summary(anova_edu_ben)
+
+#TukeyHSD test: Education level group means are significantly different at the 95 percent confidence level
+TukeyHSD(anova_edu_hed,conf.level=.95)
+plot(TukeyHSD(anova_edu_hed, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_sel,conf.level=.95)
+plot(TukeyHSD(anova_edu_sel, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_sti,conf.level=.95)
+plot(TukeyHSD(anova_edu_sti, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_sec,conf.level=.95)
+plot(TukeyHSD(anova_edu_sec, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_con,conf.level=.95)
+plot(TukeyHSD(anova_edu_con, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_tra,conf.level=.95)
+plot(TukeyHSD(anova_edu_tra, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_ach,conf.level=.95)
+plot(TukeyHSD(anova_edu_ach, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_pow,conf.level=.95)
+plot(TukeyHSD(anova_edu_pow, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_uni,conf.level=.95)
+plot(TukeyHSD(anova_edu_uni, conf.level=.95), las = 2)
+TukeyHSD(anova_edu_ben,conf.level=.95)
+plot(TukeyHSD(anova_edu_ben, conf.level=.95), las = 2)
+```
+
+## Income level
+ * ANOVA: SECURITY, STIMULATION, SELF-DIRECTION are influenced by education level.
+ * TukeyHSD test: STIMULATION, SELF-DIRECTION are influenced by education level.
+
+```{r}
+#Data cleaning
+hv_mean4 <- hv_income[,c(2,4,6,7,10,12,13:40,61)]
+names(hv_mean4)[25:35] <- c("ACHIEVEMENT", "BENEVOLENCE", "CONFORMITY", "HEDONISM", "POWER", "SECURITY", "SELF_DIRECTION", "STIMULATION", "TRADITION", "UNIVERSALISM", "group")
+hv_complete_a4 <- complete.cases(hv_mean4[, 1:35])
+hv_final_inc<- hv_mean4[hv_complete_a4, 1:35]
+
+#ANOVA
+anova_inc_hed <- aov(HEDONISM ~ group, data = hv_final_inc)
+summary(anova_inc_hed)
+anova_inc_sel <- aov(SELF_DIRECTION ~ group, data = hv_final_inc)
+summary(anova_inc_sel)
+anova_inc_sti <- aov(STIMULATION ~ group, data = hv_final_inc)
+summary(anova_inc_sti)
+anova_inc_sec <- aov(SECURITY ~ group, data = hv_final_inc)
+summary(anova_inc_sec)
+anova_inc_con <- aov(CONFORMITY ~ group, data = hv_final_inc)
+summary(anova_inc_con)
+anova_inc_tra <- aov(TRADITION ~ group, data = hv_final_inc)
+summary(anova_inc_tra)
+anova_inc_ach <- aov(ACHIEVEMENT ~ group, data = hv_final_inc)
+summary(anova_inc_ach)
+anova_inc_pow <- aov(POWER ~ group, data = hv_final_inc)
+summary(anova_inc_pow)
+anova_inc_uni <- aov(UNIVERSALISM ~ group, data = hv_final_inc)
+summary(anova_inc_uni)
+anova_inc_ben <- aov(BENEVOLENCE ~ group, data = hv_final_inc)
+summary(anova_inc_ben)
+
+#TukeyHSD test
+TukeyHSD(anova_inc_hed,conf.level=.95)
+plot(TukeyHSD(anova_inc_hed, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_sel,conf.level=.95)
+plot(TukeyHSD(anova_inc_sel, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_sti,conf.level=.95)
+plot(TukeyHSD(anova_inc_sti, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_sec,conf.level=.95)
+plot(TukeyHSD(anova_inc_sec, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_con,conf.level=.95)
+plot(TukeyHSD(anova_inc_con, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_tra,conf.level=.95)
+plot(TukeyHSD(anova_inc_tra, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_ach,conf.level=.95)
+plot(TukeyHSD(anova_inc_ach, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_pow,conf.level=.95)
+plot(TukeyHSD(anova_inc_pow, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_uni,conf.level=.95)
+plot(TukeyHSD(anova_inc_uni, conf.level=.95), las = 2)
+TukeyHSD(anova_inc_ben,conf.level=.95)
+plot(TukeyHSD(anova_inc_ben, conf.level=.95), las = 2)
+```
+
+# ANOVA & Bonferroni correction
+ * Bonferroni correction: a post hoc method to counteract the multiple comparisons problem like Tukey test. P-value less than the threshold (0.05/total number of comparisons or tests being performed) means the difference between the pairs is statistically significant.
+ 
+## Age
+ * ANOVA & Bonferroni: All values are influenced by age
+ 
+```{r}
+bon_age_hed <-LSD.test(anova_age_hed,"group",p.adj="bonferroni",group=F)
+bon_age_hed
+bon_age_sel <-LSD.test(anova_age_sel,"group",p.adj="bonferroni",group=F)
+bon_age_sel
+
+bon_age_sti <-LSD.test(anova_age_sti,"group",p.adj="bonferroni",group=F)
+bon_age_sti
+
+bon_age_sec <-LSD.test(anova_age_sec,"group",p.adj="bonferroni",group=F)
+bon_age_sec
+
+bon_age_con <-LSD.test(anova_age_con,"group",p.adj="bonferroni",group=F)
+bon_age_con
+
+bon_age_tra <-LSD.test(anova_age_tra,"group",p.adj="bonferroni",group=F)
+bon_age_tra
+
+bon_age_ach <-LSD.test(anova_age_ach,"group",p.adj="bonferroni",group=F)
+bon_age_ach
+
+bon_age_pow <-LSD.test(anova_age_pow,"group",p.adj="bonferroni",group=F)
+bon_age_pow
+
+bon_age_uni <-LSD.test(anova_age_uni,"group",p.adj="bonferroni",group=F)
+bon_age_uni
+
+bon_age_ben <-LSD.test(anova_age_ben,"group",p.adj="bonferroni",group=F)
+bon_age_ben
+```
+
+## Ethnicity
+ * ANOVA & Bonferroni: Except HEDONISM, TRADITION, and BENEVOLENCE, all values are influenced by ethnicity
+ 
+```{r}
+bon_eth_hed <-LSD.test(anova_eth_hed,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_hed
+
+bon_eth_sel <-LSD.test(anova_eth_sel,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_sel
+
+bon_eth_sti <-LSD.test(anova_eth_sti,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_sti
+
+bon_eth_sec <-LSD.test(anova_eth_sec,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_sec
+
+bon_eth_con <-LSD.test(anova_eth_con,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_con
+
+bon_eth_tra <-LSD.test(anova_eth_tra,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_tra
+
+bon_eth_ach <-LSD.test(anova_eth_ach,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_ach
+
+bon_eth_pow <-LSD.test(anova_eth_pow,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_pow
+
+bon_eth_uni <-LSD.test(anova_eth_uni,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_uni
+
+bon_eth_ben <-LSD.test(anova_eth_ben,"Ethnicity_Select_g",p.adj="bonferroni",group=F)
+bon_eth_ben
+```
+
+## Education level
+ * ANOVA: TRADITION, STIMULATION, SELF-DIRECTION are influenced by education level.
+ * Bonferroni: STIMULATION is influenced by education level.
+ 
+```{r}
+bon_edu_hed <-LSD.test(anova_edu_hed,"group",p.adj="bonferroni",group=F)
+bon_edu_hed
+
+bon_edu_sel <-LSD.test(anova_edu_sel,"group",p.adj="bonferroni",group=F)
+bon_edu_sel
+
+bon_edu_sti <-LSD.test(anova_edu_sti,"group",p.adj="bonferroni",group=F)
+bon_edu_sti
+
+bon_edu_sec <-LSD.test(anova_edu_sec,"group",p.adj="bonferroni",group=F)
+bon_edu_sec
+
+bon_edu_con <-LSD.test(anova_edu_con,"group",p.adj="bonferroni",group=F)
+bon_edu_con
+
+bon_edu_tra <-LSD.test(anova_edu_tra,"group",p.adj="bonferroni",group=F)
+bon_edu_tra
+
+bon_edu_ach <-LSD.test(anova_edu_ach,"group",p.adj="bonferroni",group=F)
+bon_edu_ach
+
+bon_edu_pow <-LSD.test(anova_edu_pow,"group",p.adj="bonferroni",group=F)
+bon_edu_pow
+
+bon_edu_uni <-LSD.test(anova_edu_uni,"group",p.adj="bonferroni",group=F)
+bon_edu_uni
+
+bon_edu_ben <-LSD.test(anova_edu_ben,"group",p.adj="bonferroni",group=F)
+bon_edu_ben
+```
+
+## Income level
+ * ANOVA: SECURITY, STIMULATION, SELF-DIRECTION are influenced by education level.
+ * Bonferroni: STIMULATION, SELF-DIRECTION are influenced by education level.
+ 
+```{r}
+bon_inc_hed <-LSD.test(anova_inc_hed,"group",p.adj="bonferroni",group=F)
+bon_inc_hed
+
+bon_inc_sel <-LSD.test(anova_inc_sel,"group",p.adj="bonferroni",group=F)
+bon_inc_sel
+
+bon_inc_sti <-LSD.test(anova_inc_sti,"group",p.adj="bonferroni",group=F)
+bon_inc_sti
+
+bon_inc_sec <-LSD.test(anova_inc_sec,"group",p.adj="bonferroni",group=F)
+bon_inc_sec
+
+bon_inc_con <-LSD.test(anova_inc_con,"group",p.adj="bonferroni",group=F)
+bon_inc_con
+
+bon_inc_tra <-LSD.test(anova_inc_tra,"group",p.adj="bonferroni",group=F)
+bon_inc_tra
+
+bon_inc_ach <-LSD.test(anova_inc_ach,"group",p.adj="bonferroni",group=F)
+bon_inc_ach
+
+bon_inc_pow <-LSD.test(anova_inc_pow,"group",p.adj="bonferroni",group=F)
+bon_inc_pow
+
+bon_inc_uni <-LSD.test(anova_inc_uni,"group",p.adj="bonferroni",group=F)
+bon_inc_uni
+
+bon_inc_ben <-LSD.test(anova_inc_ben,"group",p.adj="bonferroni",group=F)
+bon_inc_ben
+```
+ 
+# ANOVA & TukeyHSD test & Bonferroni correction results
+ * There are conflicts between the results of AVOVA and TukeyHSD test in education level and income level
+   + Education level: ANOVA shows TRADITION, STIMULATION, SELF-DIRECTION are influenced by education level, but TukeyHSD says only STIMULATION, SELF-DIRECTION are influenced by education level
+   + Income level: ANOVA shows SECURITY, STIMULATION, SELF-DIRECTION are influenced by education level, but TukeyHSD says only STIMULATION, SELF-DIRECTION are influenced by education level
+ * There is a conflict between the results of TukeyHSD test and Bonferroni correction in education level
+   + Education level: TukeyHSD shows STIMULATION, SELF-DIRECTION are influenced by education level, but Bonferroni says only STIMULATION is influenced by education level.
+  
+## TukeyHSD test results
+ * All values are influenced by Age 
+   + Age seems to be the most influential demographic factor which affects individual's value prioritization in a citizen science setting). 
+ * STIMULATION, SELF-DIRECTION are influenced by age, ethnicity, education level, and income level
+   + Regardless of demographic features, citizen scientists seem to share STIMULATION (excitement, novelty, challenge) and SELF-DIRECTION (independent thought and action--choosing, creating, exploring) as their common values and those values are salient motivation of citizen scientists who participate in the Zooniverse projects.   
+ * Except HEDONISM, TRADITION, and BENEVOLENCE, all values are influenced by ethnicity
+   + Ethnicity seems to be less influential compared to age, but impact values.  
+ 
+## Bonferroni correction results
+ * All values are influenced by Age
+   + Age seems to be the most influential demographic factor which affects individual's value prioritization in a citizen science setting). 
+ * STIMULATION is influenced by age, ethnicity, education level, and income level
+   + Regardless of demographic features, citizen scientists seem to share STIMULATION (excitement, novelty, challenge)  as their common value and this value is a salient motivation of citizen scientists who participate in the Zooniverse projects.   
+ * Except HEDONISM, TRADITION, and BENEVOLENCE, all values are influenced by ethnicity
+   + Ethnicity seems to be less influential compared to age, but impact values.  
+
+

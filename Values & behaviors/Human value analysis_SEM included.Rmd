@@ -1,0 +1,519 @@
+---
+title: "Human value analysis_ver2"
+author: "Ellie Jeong"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    fig_caption: yes
+    highlight: pygments
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_float:
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+always_allow_html: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA,  warning = FALSE, message = FALSE)
+```
+
+```{r echo=FALSE}
+# load packages and data
+library(readr)
+library(dplyr)
+library(DT)
+library(tidytext)
+library(forcats)
+library(ggplot2)
+library(lubridate)
+library(readr)
+library(data.table)
+library(tidytext)
+library(entropy)
+library(reshape2)
+library(scales)
+library(dplyr)
+library(tm)
+library(rapport)
+library(knitr)
+library(kableExtra)
+library(corpus)
+library(cowplot)
+library(gridExtra)
+library(caret)
+library(rcompanion)
+library(pROC)
+library(ngram)
+library(urltools)
+library(tidyverse)
+library(readxl)
+library(trend)
+library(data.table)
+library(DT)
+library(ggsci)
+library(HH)
+library(cluster)
+library(factoextra)
+library(imputeTS)
+library(corrplot)
+library(foreign) 
+library(lavaan)
+library(semPlot)
+
+#setwd("C:/Users/hp/iCloudDrive/Desktop/Research resources/Citizen science/Data")
+setwd("~/Library/CloudStorage/Box-Box/Research/Zoo Engagement Survey Pt 2/Data/Human Values Research [Ellie]/Data")
+hv_analysis <- read_csv("values_analysis.csv")
+```
+
+# Human value prioritization: Descriptive statistics
+
+Prioritize 10 Human Values of different demographic groups (gender/age/ethnicity/education level/income level)
+```{r}
+
+```
+
+## Gender
+
+```{r pressure3}
+hv_gender <- hv_analysis %>%
+  group_by(Gender_Select) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_final_score, na.rm = TRUE), BENEVOLENCE = mean(BENEVOLENCE_final_score, na.rm = TRUE), CONFORMITY = mean(CONFORMITY_final_score, na.rm = TRUE), HEDONISM = mean(HEDONISM_final_score, na.rm = TRUE), POWER = mean(POWER_final_score, na.rm = TRUE), SECURITY = mean(SECURITY_final_score, na.rm = TRUE), SELF_DIRECTION = mean(`SELF DIRECTION_final_score`, na.rm = TRUE), STIMULATION = mean(STIMULATION_final_score, na.rm = TRUE), TRADITION = mean(TRADITION_final_score, na.rm = TRUE), UNIVERSALISM = mean(UNIVERSALISM_final_score, na.rm = TRUE))
+hv_gender <- as.data.frame(hv_gender)
+hv_gender_rev <- t(hv_gender)
+hv_gender_rev <- hv_gender_rev[-1,]
+hv_gender_rev <- hv_gender_rev[,c(1,2)]
+colnames(hv_gender_rev) <- c("Female", "Male")
+hv_gender_rev <- as.data.frame(hv_gender_rev)
+hv_gender_rev$Female <- as.numeric(hv_gender_rev$Female)
+hv_gender_rev$Male <- as.numeric(hv_gender_rev$Male)
+```
+ * Top 3 values of female group: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of male group: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Values in lower ranks for both groups: POWER < TRADITION < UNIVERSALISM
+```{r pressure2}
+#Gender count table
+t_gender <- datatable(hv_analysis %>%  
+                        filter (Gender_Select != "NA") %>%
+                        group_by(Gender_Select) %>% 
+                        tally() %>% 
+                        arrange(desc(n)) %>%
+                        mutate(freq = round(n / sum(n),digits=2)))
+t_gender
+#Gender bar graph
+bar_gender_F <- ggplot(hv_gender_rev, aes(x=reorder(rownames(hv_gender_rev),-Female), y=Female))+geom_bar(stat="identity", fill="red")+xlab("Human values")+ylab("Mean")+ggtitle("Female human value prioritization") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))  
+bar_gender_F
+bar_gender_M <- ggplot(hv_gender_rev, aes(x=reorder(rownames(hv_gender_rev),-Male), y=Male))+geom_bar(stat="identity", fill="blue")+xlab("Human values")+ylab("Mean")+ggtitle("Male human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_gender_M
+```
+
+## Age
+ * Age groups are created according to the below criteria
+    + Young: 18~39
+    + Middle-aged: 40~65
+    + Old: 66~99
+ 
+```{r}
+#Age
+hv_age <- hv_analysis %>% 
+  mutate(Age_g=ifelse(Age<40, "Young", 
+                        ifelse(Age<66, "Middle", "Old")))
+hv_age2 <- hv_age %>%
+  group_by(Age_g) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_final_score, na.rm = TRUE), BENEVOLENCE = mean(BENEVOLENCE_final_score, na.rm = TRUE), CONFORMITY = mean(CONFORMITY_final_score, na.rm = TRUE), HEDONISM = mean(HEDONISM_final_score, na.rm = TRUE), POWER = mean(POWER_final_score, na.rm = TRUE), SECURITY = mean(SECURITY_final_score, na.rm = TRUE), SELF_DIRECTION = mean(`SELF DIRECTION_final_score`, na.rm = TRUE), STIMULATION = mean(STIMULATION_final_score, na.rm = TRUE), TRADITION = mean(TRADITION_final_score, na.rm = TRUE), UNIVERSALISM = mean(UNIVERSALISM_final_score, na.rm = TRUE))%>% 
+  filter(Age_g != "NA")
+hv_age_rev <- t(hv_age2)
+hv_age_rev <- hv_age_rev[-1,]
+colnames(hv_age_rev) <- c("Middle", "Old", "Young")
+hv_age_rev <- as.data.frame(hv_age_rev)
+hv_age_rev$Middle <- as.numeric(hv_age_rev$Middle)
+hv_age_rev$Old <- as.numeric(hv_age_rev$Old)
+hv_age_rev$Young <- as.numeric(hv_age_rev$Young)
+```
+ * Top 3 values of young people: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of middle-aged people: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of old people: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Age count table
+t_age <- datatable(hv_age %>%  
+                     filter (Age_g != "NA") %>%
+                     group_by(Age_g) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_age
+#Age bar graph
+bar_age_Y <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Young), y=Young))+geom_bar(stat="identity", fill="#D55E00")+xlab("Human values")+ylab("Mean")+ggtitle("Young group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_Y
+bar_age_M <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Middle), y=Middle))+geom_bar(stat="identity", fill="#0072B2")+xlab("Human values")+ylab("Mean")+ggtitle("Middle-aged group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_M
+bar_age_O <- ggplot(hv_age_rev, aes(x=reorder(rownames(hv_age_rev),-Old), y=Old))+geom_bar(stat="identity", fill="#CC79A7")+xlab("Human values")+ylab("Mean")+ggtitle("Old group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_age_O
+```
+
+## Ethnicity
+
+```{r}
+hv_eth <- hv_analysis %>% filter(Ethnicity_Select %in% c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)") )
+hv_eth <- hv_eth %>%
+  group_by(Ethnicity_Select) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_final_score, na.rm = TRUE), BENEVOLENCE = mean(BENEVOLENCE_final_score, na.rm = TRUE), CONFORMITY = mean(CONFORMITY_final_score, na.rm = TRUE), HEDONISM = mean(HEDONISM_final_score, na.rm = TRUE), POWER = mean(POWER_final_score, na.rm = TRUE), SECURITY = mean(SECURITY_final_score, na.rm = TRUE), SELF_DIRECTION = mean(`SELF DIRECTION_final_score`, na.rm = TRUE), STIMULATION = mean(STIMULATION_final_score, na.rm = TRUE), TRADITION = mean(TRADITION_final_score, na.rm = TRUE), UNIVERSALISM = mean(UNIVERSALISM_final_score, na.rm = TRUE))
+hv_eth_rev <- t(hv_eth)
+hv_eth_rev <- hv_eth_rev[-1,]
+hv_eth_rev <- as.data.frame(hv_eth_rev)
+colnames(hv_eth_rev) <- c("Asian", "Black", "Hispanic", "White")
+hv_eth_rev$Asian <- as.numeric(hv_eth_rev$Asian)
+hv_eth_rev$Black <- as.numeric(hv_eth_rev$Black)
+hv_eth_rev$Hispanic <- as.numeric(hv_eth_rev$Hispanic)
+hv_eth_rev$White <- as.numeric(hv_eth_rev$White)
+```
+ * Top 3 values of Asian: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of Black: ACHIEVEMENT > BENEVOLENCE > SECURITY
+ * Top 3 values of Hispanic/Latino/Spanish origin: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of White: ACHIEVEMENT > SECURITY > SELF-DIRECTION
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Ethnicity count table
+t_eth <- datatable(hv_analysis %>%  
+                     filter (Ethnicity_Select %in% c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)") ) %>%
+                     group_by(Ethnicity_Select) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_eth
+#Ethnicity bar graph
+bar_eth_A <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Asian), y=Asian))+geom_bar(stat="identity", fill="#E69F00")+xlab("Human values")+ylab("Mean")+ggtitle("Asian group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_A
+bar_eth_B <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Black), y=Black))+geom_bar(stat="identity", fill="#56B4E9")+xlab("Human values")+ylab("Mean")+ggtitle("Black group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_B
+bar_eth_H <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-Hispanic), y=Hispanic))+geom_bar(stat="identity", fill="#009E73")+xlab("Human values")+ylab("Mean")+ggtitle("Hispanic group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_H
+bar_eth_W <- ggplot(hv_eth_rev, aes(x=reorder(rownames(hv_eth_rev),-White), y=White))+geom_bar(stat="identity", fill="#F0E442")+xlab("Human values")+ylab("Mean")+ggtitle("White group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_eth_W
+```
+
+## Education level
+ * Education level groups are created according to the below criteria
+    + Less than high school group: early childhood education, primary education
+    + High school education group: lower secondary, upper secondary
+    + College education group: post-secondary non-tertiary, Short-cycle tertiary education 
+    + Advanced degree group: bachelor's, master's, doctoral
+
+```{r}
+#Education level
+hv_edu <- hv_analysis %>% filter(SchoolHighestEdu !="NA")
+hv_edu <- hv_edu %>% filter(SchoolHighestEdu !="Prefer not to answer")
+hv_edu <- hv_edu %>% mutate(Edu_g=ifelse(SchoolHighestEdu == c("Early childhood Education","Primary education"), "LessThanHighSchool",
+        ifelse(SchoolHighestEdu == c("Upper secondary education", "Lower secondary education"),"HighSchoolEducation",
+                      ifelse(SchoolHighestEdu == c("Post-secondary non-tertiary education", "Short-cycle tertiary education, e.g. vocational program"),"CollegeEducation", "AdvancedDegree"
+                             ))))
+hv_edu <- hv_edu %>%
+  group_by(Edu_g) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_final_score, na.rm = TRUE), BENEVOLENCE = mean(BENEVOLENCE_final_score, na.rm = TRUE), CONFORMITY = mean(CONFORMITY_final_score, na.rm = TRUE), HEDONISM = mean(HEDONISM_final_score, na.rm = TRUE), POWER = mean(POWER_final_score, na.rm = TRUE), SECURITY = mean(SECURITY_final_score, na.rm = TRUE), SELF_DIRECTION = mean(`SELF DIRECTION_final_score`, na.rm = TRUE), STIMULATION = mean(STIMULATION_final_score, na.rm = TRUE), TRADITION = mean(TRADITION_final_score, na.rm = TRUE), UNIVERSALISM = mean(UNIVERSALISM_final_score, na.rm = TRUE))
+hv_edu_rev <- t(hv_edu)
+hv_edu_rev <- hv_edu_rev[-1,]
+hv_edu_rev <- as.data.frame(hv_edu_rev)
+colnames(hv_edu_rev) <- c("AdvancedDegree", "CollegeEducation", "HighSchoolEducation", "LessThanHighSchool")
+hv_edu_rev$AdvancedDegree <- as.numeric(hv_edu_rev$AdvancedDegree)
+hv_edu_rev$CollegeEducation <- as.numeric(hv_edu_rev$CollegeEducation)
+hv_edu_rev$HighSchoolEducation <- as.numeric(hv_edu_rev$HighSchoolEducation)
+hv_edu_rev$LessThanHighSchool <- as.numeric(hv_edu_rev$LessThanHighSchool)
+```
+
+ * Top 3 values of Less than high school: SELF-DIRECTION > SECURITY > ACHIEVEMENT 
+ * Top 3 values of High school education: SELF-DIRECTION > ACHIEVEMENT > HEDONISM
+ * Top 3 values of College education: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Top 3 values of Advanced degree: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Values in lower ranks for all age groups: POWER/ TRADITION/ UNIVERSALISM
+ 
+```{r}
+#Education level count table
+t_edu <- datatable(hv_edu %>%  
+                     filter (Edu_g != "NA") %>%
+                     group_by(Edu_g) %>% 
+                     tally() %>% 
+                     arrange(desc(n)) %>%
+                     mutate(freq = round(n / sum(n),digits=2)))
+t_edu
+#Education bar graph
+bar_edu_L <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-LessThanHighSchool), y=LessThanHighSchool))+geom_bar(stat="identity", fill="#CC79A7")+xlab("Human values")+ylab("Mean")+ggtitle("Less than high school education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_L
+bar_edu_H <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-HighSchoolEducation), y=HighSchoolEducation))+geom_bar(stat="identity", fill="#D55E00")+xlab("Human values")+ylab("Mean")+ggtitle("High school education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_H
+bar_edu_C <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-CollegeEducation), y=CollegeEducation))+geom_bar(stat="identity", fill="#0072B2")+xlab("Human values")+ylab("Mean")+ggtitle("College education group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_C
+bar_edu_A <- ggplot(hv_edu_rev, aes(x=reorder(rownames(hv_edu_rev),-AdvancedDegree), y=AdvancedDegree))+geom_bar(stat="identity", fill="#E69F00")+xlab("Human values")+ylab("Mean")+ggtitle("Advanced degree group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_edu_A
+
+```
+
+## Income level
+ * Income level groups are created according to the below criteria
+    + Low: less than $1,000-$2,999 
+    + Middle: $3,000-$4,999
+    + High: $5,000 or more
+
+```{r}
+hv_income <- hv_analysis %>% filter(Income !="NA")
+hv_income <- hv_income %>% filter(Income !="Prefer not to answer")
+hv_income <- hv_income %>% mutate(Income_g=ifelse(Income == c("Less than $1,000","$1,000 to $1,999","$2,000 to $2,999" ), "Low",
+                                         ifelse(Income == c("$3,000 to $3,999", "$4,000 to $4,999"),"Middle","High")))
+hv_income <- hv_income %>%
+  group_by(Income_g) %>%
+  summarise(ACHIEVEMENT = mean(ACHIEVEMENT_final_score, na.rm = TRUE), BENEVOLENCE = mean(BENEVOLENCE_final_score, na.rm = TRUE), CONFORMITY = mean(CONFORMITY_final_score, na.rm = TRUE), HEDONISM = mean(HEDONISM_final_score, na.rm = TRUE), POWER = mean(POWER_final_score, na.rm = TRUE), SECURITY = mean(SECURITY_final_score, na.rm = TRUE), SELF_DIRECTION = mean(`SELF DIRECTION_final_score`, na.rm = TRUE), STIMULATION = mean(STIMULATION_final_score, na.rm = TRUE), TRADITION = mean(TRADITION_final_score, na.rm = TRUE), UNIVERSALISM = mean(UNIVERSALISM_final_score, na.rm = TRUE))
+hv_income_rev <- t(hv_income)
+hv_income_rev <- hv_income_rev[-1,]
+hv_income_rev <- as.data.frame(hv_income_rev)
+colnames(hv_income_rev) <- c("High", "Low", "Middle")
+hv_income_rev$High <- as.numeric(hv_income_rev$High)
+hv_income_rev$Low <- as.numeric(hv_income_rev$Low)
+hv_income_rev$Middle <- as.numeric(hv_income_rev$Middle)
+```
+ * Top 3 values of high income group: ACHIEVEMENT > SECURITY > SELF-DIRECTION 
+ * Top 3 values of middle income group: SECURITY > ACHIEVEMENT > SELF-DIRECTION
+ * Top 3 values of low income group: ACHIEVEMENT > SELF-DIRECTION > SECURITY
+ * Values in lower ranks for all age groups: POWER < TRADITION < UNIVERSALISM
+```{r}
+#Income level count table
+t_income <- datatable(hv_income %>%  
+            filter (Income_g != "NA") %>%
+            group_by(Income_g) %>% 
+            tally() %>% 
+            arrange(desc(n)) %>%
+            mutate(freq = round(n / sum(n),digits=2)))
+t_income
+#Income bar graph
+bar_income_H <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-High), y=High))+geom_bar(stat="identity", fill="lightblue")+xlab("Human values")+ylab("Mean")+ggtitle("High income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_H
+bar_income_M <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-Middle), y=Middle))+geom_bar(stat="identity", fill="lightgreen")+xlab("Human values")+ylab("Mean")+ggtitle("Middle income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_M
+bar_income_L <- ggplot(hv_income_rev, aes(x=reorder(rownames(hv_income_rev),-Low), y=Low))+geom_bar(stat="identity", fill="pink")+xlab("Human values")+ylab("Mean")+ggtitle("Low income group human value prioritization")+ theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5 ))
+bar_income_L
+
+```
+
+ 
+```{r}
+```
+
+# SEM (explain participation behaviors through human values)
+  * Measurement model (observed variables-latent variables) & structural model (latent variables-latent variables)
+  * Data cleaning (used mean score instead of final score. standardized variances are generated in the result instead)
+
+```{r}
+
+semdata <- hv_analysis[,c(13:40)]
+semdata$StartContr <- na_interpolation(semdata$StartContr)
+semdata$StartEnter <- na_interpolation(semdata$StartEnter)
+semdata$StartInter <- na_interpolation(semdata$StartInter)
+semdata$StartDist <- na_interpolation(semdata$StartDist)
+semdata$StartSoc <- na_interpolation(semdata$StartSoc)
+semdata$ContContr <- na_interpolation(semdata$ContContr)
+semdata$ContEnter <- na_interpolation(semdata$ContEnter)
+semdata$ContInter <- na_interpolation(semdata$ContInter)
+semdata$ContDist <- na_interpolation(semdata$ContDist)
+semdata$ContSoc <- na_interpolation(semdata$ContSoc)
+semdata$ContLearn <- na_interpolation(semdata$ContLearn)
+semdata$ContRep <- na_interpolation(semdata$ContRep)
+semdata$StopTime <- na_interpolation(semdata$StopTime)
+semdata$StopOtherOnlineAct <- na_interpolation(semdata$StopOtherOnlineAct)
+semdata$StopOtherOfflineAct <- na_interpolation(semdata$StopOtherOfflineAct)
+semdata$StopExpertise <- na_interpolation(semdata$StopExpertise)
+semdata$StopPeople <- na_interpolation(semdata$StopPeople)
+semdata$StopTask <- na_interpolation(semdata$StopTask)
+semdata$HEDONISM_mean <- na_interpolation(semdata$HEDONISM_mean)
+semdata$STIMULATION_mean <- na_interpolation(semdata$STIMULATION_mean)
+semdata$`SELF DIRECTION_mean` <- na_interpolation(semdata$`SELF DIRECTION_mean`)
+semdata$UNIVERSALISM_mean <- na_interpolation(semdata$UNIVERSALISM_mean)
+semdata$BENEVOLENCE_mean <- na_interpolation(semdata$BENEVOLENCE_mean)
+semdata$SECURITY_mean <- na_interpolation(semdata$SECURITY_mean)
+semdata$TRADITION_mean <- na_interpolation(semdata$TRADITION_mean)
+semdata$CONFORMITY_mean <- na_interpolation(semdata$CONFORMITY_mean)
+semdata$ACHIEVEMENT_mean <- na_interpolation(semdata$ACHIEVEMENT_mean)
+semdata$POWER_mean <- na_interpolation(semdata$POWER_mean)
+names(semdata)[25] <- c("SELFDIRECTION_mean")
+```
+
+## Model 1 
+ * exogenous indicators: mean value score of 10 human vales
+ * exogenous latent variables: 4 human value dimensions
+ * endogenous latent variables: start, continue, stop
+ * endogenous indicators: survey questions asking about reasons to start, continue, and stop participation 
+ 
+ * Goodness of fit test (model fit statistics): values do not reach threshold indicated in the parenthesis
+    + p value > 0.05: 0.00 (Null hypothesis: this model fits)
+    + SRMR < 0.08: 0.077 
+    + TLI > 0.95: 0.577 
+    + CFI > 0.95: 0.631
+    + RMSEA < 0.06: 0.089
+
+## Comparison between findings of previous work and those of our analysis 
+ * Findings of previous work
+    + Values related to initial participation: universalism, benevolence (self-transcendence), and security (conservation) 
+    + Values related to continue participation: security
+    + Values of which significant difference between the participants who remain and those who drop out of the project: security
+  * Findings of analysis results
+    + Values related to initial participation (partially true): conservation (1.45) / self-transcendence(-0.816)
+    + Values related to continue participation (true): conservation (1.15)
+    + Values of which significant difference between the participants who remain and those who drop out of the project (partially true): OTC (1.21) / security (0.922)
+  * Additional findings - behavior survey questions which correspond to high loading (not necessarily align with human value and behavior)
+    + Start: interest (0.67) > contribution (0.54) > entertainment (0.53)
+    + Continue: interest (0.75) > contribution (0.61) > entertainment (0.60)
+    + Stop: Offline activities (0.51) > online activities (0.48) > time (0.45)
+    
+  * Several issues
+    + Warning message: covariance matrix of latent variables is not positive definite -> results should not be reported?dd
+    + Judging from values of fit evaluation parameters, this model does not seem to have a good fit. Thus, the endogenous latent variables are split into separate models (model 2,3,4)
+
+```{r}
+#Modeling
+#Model 1
+#exogenous indicators: mean value score of 10 human values
+#exogenous latent variables: 4 human value dimensions
+#endogenous latent variables: start, continue, stop
+#endogenous indicators: survey questions asking about reasons to start, continue, and stop participation
+m1 <- 
+'OTC =~ HEDONISM_mean + SELFDIRECTION_mean + STIMULATION_mean 
+Conservation =~ SECURITY_mean + CONFORMITY_mean + TRADITION_mean 
+Self_enhancement =~ ACHIEVEMENT_mean + POWER_mean
+Self_transcendence =~ UNIVERSALISM_mean + BENEVOLENCE_mean
+
+Start =~ StartEnter + StartInter + StartSoc + StartDist + StartContr
+Continue =~ ContEnter + ContInter + ContSoc + ContLearn + ContRep + ContDist + ContContr
+Stop =~ StopOtherOnlineAct + StopOtherOfflineAct + StopExpertise + StopPeople + StopTask + StopTime  
+
+Start ~ OTC + Conservation + Self_enhancement + Self_transcendence
+Continue ~ OTC + Conservation + Self_enhancement + Self_transcendence
+Stop ~ OTC + Conservation + Self_enhancement + Self_transcendence'
+
+fit1 <- sem(m1, data=semdata)
+summary(fit1, standardized = TRUE, fit.measures=TRUE )
+```
+
+## Model 2 
+ * exogenous indicators: mean value score of 10 human vales
+ * exogenous latent variables: 4 human value dimensions
+ * endogenous latent variables: start
+ * endogenous indicators: survey questions asking about reasons to start participation
+ 
+ * Goodness of fit test (model fit statistics): acceptable?
+    + p value > 0.05: 0.00
+    + SRMR < 0.08: 0.055 
+    + TLI > 0.95: 0.817 
+    + CFI > 0.95: 0.86
+    + RMSEA < 0.06: 0.074 (acceptable < 0.08)
+
+  * Loadings are slightly different, but findings of model 2,3,4 are same with those of model 1.
+    
+  * Several issues(same in model 2,3,4)
+    + Same warning message: covariance matrix of latent variables is not positive definite -> results should not be reported?
+    + Some regression loadings are larger than 1 (not sure if it's problematic)  
+
+```{r}
+sem_start <- semdata[,c(1:5,19:28)]
+m2 <- 
+  'OTC =~ HEDONISM_mean + SELFDIRECTION_mean + STIMULATION_mean 
+Conservation =~ SECURITY_mean + CONFORMITY_mean + TRADITION_mean 
+Self_enhancement =~ ACHIEVEMENT_mean + POWER_mean #factors less than 3 indicators can be problematic
+Self_transcendence =~ UNIVERSALISM_mean + BENEVOLENCE_mean
+
+Start =~ StartEnter + StartInter + StartSoc + StartDist + StartContr
+
+Start ~ OTC + Conservation + Self_enhancement + Self_transcendence
+'
+
+fit2 <- sem(m2, data=sem_start)
+summary(fit2, standardized = TRUE, fit.measures=TRUE )
+diagram2<-semPlot::semPaths(fit2,
+                           rotation = 4,
+                           whatLabels="std", intercepts=FALSE,                      
+                           curveAdjacent = TRUE, title=TRUE,
+                           layout="tree",curvePivot=TRUE,
+                           edge.color = "black",
+                           edge.label.cex=.9,
+                           edge.label.position=0.7
+)
+```
+
+## Model 3 
+ * exogenous indicators: mean value score of 10 human vales
+ * exogenous latent variables: 4 human value dimensions
+ * endogenous latent variables: continue
+ * endogenous indicators: survey questions asking about reasons to continue participation
+ 
+ * Goodness of fit test (model fit statistics): acceptable?
+    + p value > 0.05: 0.00
+    + SRMR < 0.08: 0.067 
+    + TLI > 0.95: 0.822 
+    + CFI > 0.95: 0.778
+    + RMSEA < 0.06: 0.078
+    
+```{r}
+sem_continue <- semdata[,c(6:12,19:28)]
+m3 <- 
+  'OTC =~ HEDONISM_mean + SELFDIRECTION_mean + STIMULATION_mean 
+Conservation =~ SECURITY_mean + CONFORMITY_mean + TRADITION_mean 
+Self_enhancement =~ ACHIEVEMENT_mean + POWER_mean
+Self_transcendence =~ UNIVERSALISM_mean + BENEVOLENCE_mean
+
+Continue =~ ContEnter + ContInter + ContSoc + ContLearn + ContRep + ContDist + ContContr
+
+Continue ~ OTC + Conservation + Self_enhancement + Self_transcendence
+'
+fit3 <- sem(m3, data=sem_continue)
+summary(fit3, standardized = TRUE, fit.measures=TRUE )
+diagram3<-semPlot::semPaths(fit3,
+                           rotation = 4,
+                           whatLabels="std", intercepts=FALSE,                      
+                           curveAdjacent = TRUE, title=TRUE,
+                           layout="tree",curvePivot=TRUE,
+                           edge.color = "black",
+                           edge.label.cex=.9,
+                           edge.label.position=0.7
+)
+```
+
+## Model 4 
+ * exogenous indicators: mean value score of 10 human vales
+ * exogenous latent variables: 4 human value dimensions
+ * endogenous latent variables: stop
+ * endogenous indicators: survey questions asking about reasons to stop participation
+ 
+ * Goodness of fit test (model fit statistics): acceptable?
+    + p value > 0.05: 0.00
+    + SRMR < 0.08: 0.051 
+    + TLI > 0.95: 0.797 
+    + CFI > 0.95: 0.841
+    + RMSEA < 0.06: 0.072
+
+```{r}
+sem_stop <- semdata[,c(13:18,19:28)]
+m4 <- 
+  'OTC =~ HEDONISM_mean + SELFDIRECTION_mean + STIMULATION_mean 
+Conservation =~ SECURITY_mean + CONFORMITY_mean + TRADITION_mean 
+Self_enhancement =~ ACHIEVEMENT_mean + POWER_mean
+Self_transcendence =~ UNIVERSALISM_mean + BENEVOLENCE_mean
+
+Stop =~ StopOtherOnlineAct + StopOtherOfflineAct + StopExpertise + StopPeople + StopTask + StopTime  
+
+Stop ~ OTC + Conservation + Self_enhancement + Self_transcendence
+'
+fit4 <- sem(m4, data=sem_stop)
+summary(fit4, standardized = TRUE, fit.measures=TRUE )
+diagram4<-semPlot::semPaths(fit4,
+                            rotation = 4,
+                            whatLabels="std", intercepts=FALSE,                      
+                            curveAdjacent = TRUE, title=TRUE,
+                            layout="tree",curvePivot=TRUE,
+                            edge.color = "black",
+                            edge.label.cex=.9,
+                            edge.label.position=0.7
+)
+```
+
