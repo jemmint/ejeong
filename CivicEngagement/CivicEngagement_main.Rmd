@@ -1,0 +1,2908 @@
+---
+title: "Main study - Civic Engagement Survey"
+author: "Ellie Jeong"
+date: "`r Sys.Date()`"
+output:
+  html_document: 
+    fig_caption: yes
+    highlight: pygments
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_float:
+      smooth_scroll: no
+  pdf_document:
+    toc: yes
+    toc_depth: '5'
+always_allow_html: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(tidyverse)
+library(reshape2)
+library(car)
+library(psych)
+library(MASS)
+library(DT)
+library(knitr)
+library(kableExtra)
+library(gtsummary)
+library(ggpubr)
+library(tm)
+library(topicmodels)
+library(tidytext)
+library(ldatuning)
+library(stm)
+library(stargazer)
+library(gridExtra)
+library(broom)
+
+get_os <- function() {
+  sysinf <- Sys.info()
+  if (!is.null(sysinf)) {
+    os <- sysinf['sysname']
+  } else {
+    os <- .Platform$OS.type
+  }
+  
+  if (grepl("darwin", R.version$os)) os <- "osx"
+  if (grepl("linux-gnu", R.version$os)) os <- "linux"
+  
+  tolower(os)
+}
+
+setwd(if (get_os() == "osx") "Z:/survey_civicTechData/main" else "Z:/survey_civicTechData/main")
+
+# Import data
+survey <- read.csv("CivicSurvey_main_241215.csv")
+prolific_300 <- read.csv("prolific_demo_300.csv")
+prolific_449 <- read.csv("prolific_demo_449.csv")
+#census_tract_raw <- read.csv("census_tract.csv")
+
+# Remove redundant headers
+survey <- survey[-c(1,2),]
+options(digits = 3)
+```
+
+# Import data
+
+1.  Qualtrics survey responses
+
+2.  Prolific demographic data
+
+# Data manipulation
+
+## Merge Qualtrics data with Prolific data
+
+```{r, echo = FALSE}
+# Merge Prolific demo
+## Change the column name
+colnames(prolific_300)[2] <- "PROLIFIC_PID"
+colnames(prolific_449)[2] <- "PROLIFIC_PID"
+## Merge data
+prolific_demo <- rbind(prolific_449,prolific_300)
+df_raw <- merge(survey, prolific_demo, by="PROLIFIC_PID", all.y=TRUE)
+```
+
+## Split data - data description
+
+1.  fail: returned, timed-out responses
+
+2.  partial: returned or timed-out responses that answered attention check but did not pass it - partial payment
+
+3.  fail_complete: passed attention check among returned, timed-out responses - full payment -\> combined with df_raw
+
+4.  df_raw: complete responses awaiting review - full payment (df_raw2 = converted Likert scale from character to numerical values)
+
+5.  incomplete: incomplete responses that did not pass attention check but awaiting review (mostly they completed demographic section only) - no compensation
+
+-   ***754 valid submissions (303 from first batch + 451 from second batch) inclusion criteria (data = df_raw, df_raw2)***
+
+    -   Passed attention check
+
+    -   Answered all questions from Section 1 to Section 5
+
+    -   Provided Prolific ID
+
+    -   Prolific ID was not duplicated
+
+```{r}
+# 1: N = 556
+fail <- (c("RETURNED","TIMED-OUT"))
+fail <- df_raw %>% filter(Status.y %in% fail) #N=556
+
+# 2: N = 1
+partial <- fail %>% filter(Q26=="purple") 
+partial <- partial %>% filter(Q35=="")
+
+# 3: N = 19
+fail_complete <- fail %>% filter(Q26=="blue")
+# complete <- (c("Prolific email address (participantid@email.prolific.com):","I am not interested in participating at this time"))
+# fail_complete <- fail_complete %>% filter(Q35 %in% complete) 
+
+## Check duplicates
+sum(duplicated(fail_complete$PROLIFIC_PID)) # 1 duplicate 
+fail_complete <- fail_complete[!duplicated(fail_complete$PROLIFIC_PID), ]
+
+approve <- (c("AWAITING REVIEW","APPROVED"))
+df_raw <- df_raw %>% filter(Status.y %in% approve)
+
+sum(duplicated(df_raw$PROLIFIC_PID)) # 6 duplicates
+duplicates <- df_raw %>%
+     group_by(PROLIFIC_PID) %>%
+     filter(n() > 1) %>%
+     ungroup()
+duplicates <- duplicates$PROLIFIC_PID
+```
+
+```{r, echo = FALSE}
+# 5: N = 15
+incomplete <- df_raw %>% filter(Q26!="blue") #N=15
+incomplete <- incomplete %>% filter(!(PROLIFIC_PID %in% duplicates)) #N=9
+
+# 4:N = 754
+df_raw <- df_raw %>% filter(Q26=="blue") #N=735
+## Merge df_raw + fail_complete 
+df_raw <- rbind(df_raw, fail_complete) #N=754
+
+df_raw$Q3 <- as.numeric(df_raw$Q3)
+#df_raw$Age <- as.numeric(df_raw$Age)
+
+# Fix incorrect data
+df_raw[df_raw$PROLIFIC_PID=="629d679fb4c7c6dbb69817d8", "Q58"] <- "No"
+```
+
+# Respondent Demographics
+
+-   Age (grouping reference: <https://www.prb.org/resources/fact-sheet-aging-in-the-united-states/>, <https://www.census.gov/library/visualizations/interactive/exploring-age-groups-in-the-2020-census.html/>)
+    -   Young: \~34
+    -   Middle: 35\~64
+    -   Old: 65\~
+-   Ethnicity: White, Black, Asian, Hispanic, American Indian or Alaska Native (AIAN), Middle Eastern or North African (MENA), Native Hawaiian or Pacific Islander (NHPI), Multi-racial - AIAN, MENA NHPI are excluded from the analysis
+-   Gender: Female, Male, Other
+-   Education level: Less than a college degree, College Degree, Advanced Degree
+-   Income level (grouping reference: <https://www.census.gov/library/stories/2023/09/income-inequality.html#>)
+    -   Low: Below \$75,000 (reference - \$74,580 or less))
+    -   Middle: \$75,000 - \$199,999
+    -   High: \$200,000 or more (reference - \$216,000 or more)
+-   Community: non-disadvantaged, disadvantaged (including partially disadvantaged group)
+
+```{r, echo = FALSE}
+# Age group (grouping reference: https://www.prb.org/resources/fact-sheet-aging-in-the-united-states/)
+# Young: ~34
+# Middle: 35-64
+# Old: 65~
+
+summary(df_raw$Q3)
+
+df_raw <- df_raw %>%
+  mutate(age_g=ifelse(Q3<35, "Young",ifelse(Q3<65, "Middle-aged", "Old")))
+
+age_t <- df_raw %>% 
+  dplyr::filter(age_g != "NA") %>%
+  dplyr::group_by(age_g) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(age_t)[1] <- "value"
+age_t$group <- "Age"
+
+# Ethnicity group
+df_raw <- df_raw %>%
+  mutate(eth_g = case_when(
+    Q4 == "White" ~ "White",
+    Q4 == "Asian" ~ "Asian",
+    Q4 == "Black or African American" ~ "Black",
+    Q4 == "Hispanic or Latino" ~ "Hispanic",
+    Q4 == "American Indian or Alaska Native" ~ "AIAN",
+    Q4 == "Middle Eastern or North African" ~ "MENA",
+    Q4 == "Native Hawaiian or Pacific Islander" ~ "NHPI",
+    TRUE ~ "Multi-racial"
+  ))
+
+eth_t <- df_raw %>% 
+  dplyr::filter(eth_g != "NA") %>%
+  dplyr::group_by(eth_g) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(eth_t)[1] <- "value"
+eth_t$group <- "Ethnicity"
+
+# Gender
+gender_t <- df_raw %>% 
+  dplyr::filter(Q5 != "NA") %>%
+  dplyr::group_by(Q5) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(gender_t)[1] <- "value"
+gender_t$group <- "Gender"
+
+# Education level
+df_raw <- df_raw %>%
+  mutate(edu_g = case_when(
+  Q6 %in% c("Less than high school diploma", "High school diploma or equivalent (e.g. GED)", "Some college, no degree", "Associate degree") ~ "Less than College Degree",
+  Q6 == "Bachelor's degree" ~ "College Degree",
+  Q6 %in% c("Master's degree", "Doctoral degree", "Professional degree") ~ "Advanced Degree"
+))
+
+edu_t <- df_raw %>% 
+  dplyr::filter(edu_g != "NA") %>%
+  dplyr::group_by(edu_g) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(edu_t)[1] <- "value"
+edu_t$group <- "Education"
+
+# Income level (grouping reference:https://www.census.gov/library/stories/2023/09/income-inequality.html#:~:text=The%20ratio%20of%20the%2090th,a%206.7%25%20decrease%20from%202021)
+# Low: Below $74,580
+# Middle: $74,580 - $216,000
+# High: Above $216,000
+
+low <- c("Less than $10,000","$10,000 to $14,999","$15,000 to $24,999","$25,000 to $49,999","$50,000 to $74,999")
+middle <- c("$75,000 to $99,999","$100,000 to $149,999","$150,000 to $199,999")
+
+df_raw <- df_raw %>%
+  mutate(income_g = case_when(
+    Q7 %in% low ~ "Low",
+    Q7 %in% middle ~ "Middle",
+    TRUE ~ "High"
+  ))
+
+income_t <- df_raw %>% 
+  dplyr::filter(income_g != "NA") %>%
+  dplyr::group_by(income_g) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(income_t)[1] <- "value"
+income_t$group <- "Income"
+
+# Community
+df_raw <- df_raw %>%
+  mutate(Disadvantaged = case_when(
+    Q58 == "No" ~ "Non-disadvantaged",
+    Q58 %in% c("Yes","Partially") ~ "Disadvantaged"))
+
+comm_t <- df_raw %>% 
+  dplyr::filter(Disadvantaged != "NA") %>%
+  dplyr::group_by(Disadvantaged) %>% 
+  dplyr::summarize(Frequency = n()) %>%
+  dplyr::arrange(desc(Frequency)) %>%
+  dplyr::mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+names(comm_t)[1] <- "value"
+comm_t$group <- "Communities"
+
+#comm_t
+# comm_t <- datatable(comm, 
+#           caption = "Community distribution") %>%
+#   formatRound(columns = "Proportion", digits = 2)
+# comm_t
+
+# Participant demographics (combined)
+demo_summary <- rbind(age_t,eth_t,gender_t,edu_t,income_t,comm_t)
+
+colnames(df_raw)[colnames(df_raw) == "Q5"] <- "gender_g"
+df_raw <- df_raw %>% rename(census=Disadvantaged)
+```
+
+```{r, echo = FALSE}
+# Create a table
+demo_summary2  <- t(demo_summary)
+demo_summary2 <- data.frame(row.names(demo_summary2),demo_summary2)
+names(demo_summary2) <- demo_summary2[1,]
+demo_summary2 <- demo_summary2[-1,]
+row.names(demo_summary2) <- 1:dim(demo_summary2)[1] #number of rows
+demo_summary2 <- demo_summary2[-3,]
+
+demo_table <- kbl(demo_summary2,padding = 1,col.names = linebreak(c("", "Young", "Middle", "Old", "White", "Black", "Multi racial", "Asian", "Hispanic", "AIAN", "MENA", "NHPI", "Female", "Male", "Other", "< College", "College", "Adv. Degree", "High", "Middle", "Low", "Non-disadvantaged", "Disadvantaged")), escape = TRUE, align = rep("c", ncol(demo_summary2))) %>%
+  kable_paper() %>%
+  add_header_above(c(" " = 1, "Age"=3,"Race/Ethnicity"=8, "Gender" = 3,"Education"=3,"Income"=3,"Community"=2)) %>%
+  row_spec(0, angle = 0, font_size = 13)  %>%
+  column_spec (c(1,4,12,15,18,21), border_right = T) 
+
+demo_table
+```
+
+# Calculate reliability scores
+
+```{r, echo = FALSE, warning = FALSE}
+# convert scale points into numeric form (df_raw -> df_raw2)
+
+## Q14
+likert_14 <- function(column) {
+  column <- replace(column, column == "I have never particiated", 1)
+  column <- replace(column, column == "Infrequently", 2)
+  column <- replace(column, column == "Frequently", 3)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw %>%
+  mutate_at(vars(Q14_1,Q14_2,Q14_3,Q14_4,Q14_5,Q14_6,Q14_7,Q14_8),likert_14)
+
+## Q19
+likert_19 <- function(column) {
+  column <- replace(column, column == "Yes", 1)
+  column <- replace(column, column == "No", 0)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q19_1,Q19_2,Q19_3,Q19_4,Q19_5,Q19_6,Q19_7),likert_19)
+
+# Q20 - missing data since only people who have used any data answered this question
+likert_20 <- function(column) {
+  column <- replace(column, column == "Not confident", 1)
+  column <- replace(column, column == "Slightly confident", 2)
+  column <- replace(column, column == "Moderately confident", 3)
+  column <- replace(column, column == "Very confident", 4)
+  column <- replace(column, column == "Extremely confident", 5)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q20_1,Q20_2,Q20_3,Q20_4,Q20_5,Q20_6,Q20_7),likert_20)
+
+## Q24
+likert_24 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q24_1,Q24_2,Q24_3,Q24_4,Q24_5),likert_24)
+
+## Q28
+likert_28 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q28_1,Q28_2,Q28_3,Q28_4,Q28_5),likert_28)
+
+## Q29
+likert_29 <- function(column) {
+  column <- replace(column, column == "Strongly disagree", 1)
+  column <- replace(column, column == "Somewhat disagree", 2)
+  column <- replace(column, column == "Neither agree nor disagree", 3)
+  column <- replace(column, column == "Somewhat agree", 4)
+  column <- replace(column, column == "Strongly agree", 5)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q29_1,Q29_2,Q29_3,Q29_4),likert_29)
+
+## Q30
+likert_30 <- function(column) {
+  column <- replace(column, column == "Not at all", 1)
+  column <- replace(column, column == "Concerned", 2)
+  column <- replace(column, column == "Extremely concerned", 3)
+  column <- replace(column, column == "I don't know enough about this issue", 4)
+  return(as.numeric(column))
+}
+
+df_raw2 <- df_raw2 %>%
+  mutate_at(vars(Q30_1,Q30_2,Q30_3,Q30_4,Q30_5,Q30_6,Q30_7,Q30_8),likert_30)
+```
+
+## Reliability test - interpretation
+
+-   Alpha \> 0.9: Excellent reliability.
+
+-   Alpha between 0.8 and 0.9: Good reliability.
+
+-   Alpha between 0.7 and 0.8: Acceptable reliability.
+
+-   Alpha \< 0.7: May indicate poor internal consistency
+
+## Reliability test - results
+
+> ### Q14. In the past year, how frequently have you been involved in the following types of civic participation activities? **alpha: 0.85 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+# alpha output interpretation- https://rpubs.com/hauselin/reliabilityanalysis
+Q14 <- df_raw2 %>% dplyr::select(Q14_1:Q14_8)
+#Q14 <- df[, c("Q14_1", "Q14_2", "Q14_3", "Q14_4", "Q14_5", "Q14_6", "Q14_7", "Q14_8")]
+Q14_score <- psych::alpha(Q14)
+Q14_score$total
+Q14_score$alpha.drop
+```
+
+> ### Q19. Have you ever used any of the following data to support your position or argument when engaging in discussions (with friends or more formally) about public policy? **alpha: 0.80 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q19 <- df_raw2 %>% dplyr::select(Q19_1:Q19_7)
+Q19_score <- psych::alpha(Q19)
+Q19_score$total
+Q19_score$alpha.drop
+```
+
+> ### Q20. How confident do you feel about using the data or information you have used? **alpha: 0.80 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q20 <- df_raw2 %>% dplyr::select(Q20_1:Q20_7)
+Q20_score <- psych::alpha(Q20, na.rm=TRUE) #pairwise deletion to handle missing values: calculates correlations for each pair of items that have complete data
+Q20_score$total
+Q20_score$alpha.drop
+```
+
+> ### Q24. To what extent do you agree with the following statements about data relevant to public policy? **alpha: 0.84 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q24 <- df_raw2 %>% dplyr::select(Q24_1:Q24_5)
+Q24_score <- psych::alpha(Q24)
+Q24_score$total
+Q24_score$alpha.drop
+```
+
+> ### Q28. To what extent do you agree with the following statements? **alpha: 0.8 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q28 <- df_raw2 %>% dplyr::select(Q28_1:Q28_5)
+Q28_score <- psych::alpha(Q28)
+Q28_score$total
+Q28_score$alpha.drop
+```
+
+> ### Q29. To what extent do you agree with the following statements? **alpha: 0.59 (if "Data collection practices in my community are fair and transparent" is dropped, 0.69) -\> exclude this statement from the analysis**
+
+```{r, echo = FALSE, warning = FALSE}
+Q29 <- df_raw2 %>% dplyr::select(Q29_1:Q29_4)
+Q29_score <- psych::alpha(Q29)
+Q29_score$total
+Q29_score$alpha.drop
+```
+
+> ### Q29. To what extent do you agree with the following statements? **alpha after dropping "Data collection practices in my community are fair and transparent": 0.69 (acceptable)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q29_rev <- Q29[,-1]
+Q29_rev_score <- psych::alpha(Q29_rev)
+Q29_rev_score$total
+Q29_rev_score$alpha.drop
+```
+
+> ### Q30. How concerned are you about the following issues related to data use in civic engagement? **alpha: 0.86 (good)**
+
+```{r, echo = FALSE, warning = FALSE}
+Q30 <- df_raw2 %>% dplyr::select(Q30_1:Q30_8)
+Q30_score <- psych::alpha(Q30)
+Q30_score$total
+Q30_score$alpha.drop
+```
+
+# Data Analysis
+
+-   ***743 responses are included in data analysis (data = df, df_ver2) after removing three ethnicity groups (AIAN, MENA, NHPI)*** 
+\> 1. American Indian or Alaska Native (AIAN) Asian: 5 
+\> 2. Middle Eastern or North African (MENA): 5 
+\> 3. Native Hawaiian or Pacific Islander (NHPI): 1
+
+## [Section 5] - Q28, Q29, Q30
+
+## **Q28. To what extent do you agree with the following statements? (N = 743)**
+
+> 1\. Five statements about positive attitudes toward data in policy
+>
+> 2\. Responses in 5 point likert scale
+>
+> \- "Strongly disagree" = 1
+>
+> \- "Strongly agree" = 5
+
+```{r, echo=FALSE}
+# Remove three ethnicity groups (AIAN, MENA, NHPI) from the analysis (N = 11)
+eth_exclude <- c("AIAN","MENA","NHPI")
+df <- df_raw2 %>% filter(!eth_g %in% eth_exclude)
+
+# Change data to long format
+melt_28 <- reshape2::melt(df, 
+                          id.vars = c("gender_g","age_g","eth_g","edu_g","income_g","census"), 
+                          measure.vars = grep("^Q28_", names(df), value = TRUE))
+
+# Define a named vector with the new values
+new_28 <- c(
+  "Q28_1" = "Data should play a key role in the development of public policy",
+  "Q28_2" = "Data-driven decisions are more reliable than decisions based on opinions or anecdotal evidence",
+  "Q28_3" = "The use of data in policy-making has led to more transparent government decisions",
+  "Q28_4" = "Data can help bridge the gap between policymakers and the public",
+  "Q28_5" = "Numeric data are more convincing than anecdotal or stories"
+)
+# Replace values in the 'variable' column
+melt_28 <- melt_28 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_28))
+```
+
+### Descriptive Statistics
+
+#### Data table
+
+```{r, echo=FALSE}
+melt_28$value <- as.numeric(melt_28$value)
+# Data table_all
+dt_28_all <- melt_28 %>%
+  filter(!is.na(value)) %>%
+  group_by(variable) %>%
+  summarise(
+    #Count = n(),
+    #Proportion = n() / nrow(filter(df, !is.na(census))) * 100, #number of people who answered this question
+    Score_mean = mean(value, na.rm = TRUE)) %>%
+  arrange(desc(Score_mean))
+
+
+t_28_all <- datatable(dt_28_all,
+          caption = "Attitudes toward the role of data in policy") %>%
+  formatRound(columns = "Score_mean", digits = 2)
+t_28_all
+
+# Bar graph
+ggplot(dt_28_all, aes(x = reorder(variable, Score_mean), y = Score_mean)) +
+  geom_bar(stat = "identity", fill = "steelblue") +  # Use bars with a steel blue fill
+  coord_flip() +  # Flip coordinates to make it horizontal
+  labs(
+    title = "Mean Scores by Variable",
+    x = "Variable",
+    y = "Mean Score"
+  ) +
+  theme_minimal() +  # Apply a clean minimal theme
+  theme(
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+    + coord_flip()
+  )
+```
+
+```{r, echo=FALSE}
+# Data table
+dt_28 <- melt_28 %>%
+  group_by(age_g, variable) %>%
+  summarise(
+    Count = n(),
+    #Proportion = n() / nrow(filter(df, !is.na(census))) * 100,
+    Score_mean = mean(value, na.rm = TRUE)) %>% 
+  arrange(desc(Score_mean))
+
+
+t_28 <- datatable(dt_28, 
+          caption = "Attitudes toward data in policy") %>%
+  formatRound(columns = "Score_mean", digits = 2)
+t_28
+```
+
+> #### Visualization (group comparison)
+
+```{r, echo = FALSE}
+# Reorder age_g factor levels
+melt_28$age_g <- factor(melt_28$age_g, levels = c("Old", "Middle-aged", "Young"))
+
+# Create the plot - age
+Q28_age <- ggplot(dt_28, aes(x = reorder(variable, Score_mean), y = Score_mean, fill = age_g)) + 
+  geom_bar(position = position_dodge(0.8), stat = "identity", size = 0.5, width = 0.8) + 
+  geom_text(aes(label = sprintf("%.1f", Score_mean)),  
+            position = position_dodge(0.8),      
+            hjust = -0.1, size = 3, fontface = "bold") + 
+  labs(x = "Attitudes toward data in policy", 
+       y = "Level of agreement", 
+       title = "", 
+       fill = "") +
+  scale_fill_manual(values = c("darkblue", "#1f78b4", "lightblue"),
+                    breaks = c("Old", "Middle-aged", "Young")) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 10, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 7, face = "bold")
+  ) +
+  coord_flip()
+
+# Reorder age_g factor levels
+melt_28$census <- factor(melt_28$census, levels = c("Disadvantaged", "Non-disadvantaged"))
+
+# Data table - community
+dt_28_census <- melt_28 %>%
+  group_by(census, variable) %>%
+  summarise(
+    Count = n(),
+    #Proportion = n() / nrow(filter(df, !is.na(census))) * 100,
+    Score_mean = mean(value, na.rm = TRUE)) %>% 
+  arrange(desc(Score_mean))
+
+# Create the plot - community
+Q28_census <- ggplot(dt_28_census, aes(x = reorder(variable, Score_mean), y = Score_mean, fill = census)) + 
+  geom_bar(position = position_dodge(0.8), stat = "identity", size = 0.5, width = 0.8) + 
+  geom_text(aes(label = sprintf("%.1f", Score_mean)),  
+            position = position_dodge(0.8),      
+            hjust = -0.1, size = 3, fontface = "bold") + 
+  labs(x = "Attitudes toward data in policy", 
+       y = "Level of agreement", 
+       title = "", 
+       fill = "") +
+  scale_fill_manual(values = c("darkblue", "lightblue"),
+                    breaks = c("Disadvantaged", "Non-disadvantaged")) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 10, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 7, face = "bold"),
+    axis.text.y = element_text(size = 7, face = "bold")
+  ) +
+  coord_flip()
+```
+
+### Chi-square test of equality of two proportions (source: <https://www.sthda.com/english/wiki/two-proportions-z-test-in-r>, <https://favtutor.com/blogs/prop-test-in-r>)
+
+#### **[Results]** - **no significant difference in the proportions of agreement with attitudes toward a role of data in policy across community membership groups** (p = 0.07)
+
+```{r, echo=FALSE}
+# Data manipulation
+# Define the function to recode the Likert scale responses
+likert_28_2 <- function(column) {
+  column <- as.character(column)  
+  column <- dplyr::case_when(
+    column == 1 ~ "disagree",
+    column == 2 ~ "disagree",
+    column == 3 ~ "neither",
+    column == 4 ~ "agree",
+    column == 5 ~ "agree"
+  )
+  return(as.factor(column))  # Convert the column to a factor
+}
+
+# Apply the function to specific columns in the data frame
+df_ver2 <- df %>%
+  mutate(across(c(Q28_1, Q28_2, Q28_3, Q28_4, Q28_5), likert_28_2))
+
+# Change data to long format
+melt_28_2 <- reshape2::melt(df_ver2, 
+                          id.vars = c("gender_g","age_g","eth_g","edu_g","income_g","census"), 
+                          measure.vars = grep("^Q28_", names(df_ver2), value = TRUE))
+
+# Replace values in the 'variable' column
+melt_28_2 <- melt_28_2 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_28))
+
+## Test of proportions (community membership & agreement)
+ct_28 <- table(melt_28_2$value, melt_28_2$census)
+prop.test(ct_28["agree",],colSums(ct_28))
+```
+
+### Chi-square test of homogeneity (more than two proportions)
+
+#### **[Results]** - **Age, education level, and income level are associated with positive attitudes toward the role of data in policy**
+
+```{r, echo=FALSE}
+# ## Chi-square test
+# # List of demographic variables
+demographics <- c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census")
+#
+# # Loop through each demographic variable
+for (demo in demographics) {
+   cat(paste0("\n", demo, " impacts on overall attitudes toward data in policy:\n"))
+   print(chisq.test(melt_28_2[[demo]], melt_28_2$value))}
+#
+# #Effect size
+# chi_result <- chisq.test(melt_28_2$age_g, melt_28_2$value)
+# cramers_v <- sqrt(chi_result$statistic / (sum(chi_result$observed) *
+#                                           min(nrow(chi_result$observed) - 1,
+#                                               ncol(chi_result$observed) - 1)))
+#
+# cat("Cramér's V:", cramers_v, "\n")
+#
+# # For 2x2 tables, you can use Phi:
+# if (nrow(chi_result$observed) == 2 && ncol(chi_result$observed) == 2) {
+#   phi <- sqrt(chi_result$statistic / sum(chi_result$observed))
+#   cat("Phi Coefficient:", phi, "\n")
+# }
+#
+# # Interpretation of Cramér's V:
+# # 0.00 - 0.10: Weak association.
+# # 0.11 - 0.30: Moderate association.
+# # 0.31 and above: Strong association.
+```
+
+### Kruskal-Wallis test (KW test)
+
+#### **[Results]** - **Age, ethnicity, education level, income level, and community** are associated with positive attitudes toward the role of data in policy with small effect size
+
+> 1.  **Age** significantly impacts overall attitudes toward data in policy (p \< 0.001, effect size = 0.004)
+>
+>     -   "Data should play a key role in the development of public policy" (p = 0.05, effect size = 0.005)
+>
+> 2.  **Ethnicity** significantly impacts overall attitudes toward data in policy (p-value \< 0.01, effect size = 0.003)
+>
+> -   "Data should play a key role in the development of public policy" (p \< 0.05, effect size = 0.01)
+> -   "Data-driven decisions are more reliable than decisions based on opinions or anecdotal evidence" (p \< 0.01, effect size = 0.02)
+>
+> 3.  **Education** significantly impacts overall attitudes toward data in policy. (p-value \< 0.001, effect size = 0.01)
+>
+> -   "Data should play a key role in the development of public policy" (p \< 0.05, effect size = 0.01)
+> -   "Data-driven decisions are more reliable than decisions based on opinions or anecdotal evidence" (p \< 0.05, effect size = 0.01)
+> -   "The use of data in policy-making has led to more transparent government decisions" (p \< 0.01, effect size = 0.02)
+>
+> 4.  **Income** significantly impacts overall attitudes toward data in policy. (p \< 0.001, effect size = 0.01)
+>
+> -   "Data should play a key role in the development of public policy" (p \< 0.01, effect size = 0.01)
+> -   "Data-driven decisions are more reliable than decisions based on opinions or anecdotal evidence" (p \< 0.05, effect size = 0.01)
+> -   "The use of data in policy-making has led to more transparent government decisions" (p \< 0.01, effect size = 0.01)
+> -   "Data can help bridge the gap between policymakers and the public" (p \< 0.01, effect size = 0.01)
+>
+> 5.  **Community** significantly impacts overall attitudes toward data in policy. (p \< 0.05, effect size = 0.01)
+>
+> -   "Data should play a key role in the development of public policy" (p \< 0.05, effect size = 0.01)
+
+> -   *Indicates whether a difference exists across demographic groups and magnitude of the differences between groups*
+>     -   [*Magnitude of Effect Size*](https://search.r-project.org/CRAN/refmans/rstatix/html/kruskal_effsize.html) *(Eta-Squared)*
+>         -   *Small Effect Size: 0.01 ≤ η² \< 0.06*
+>         -   *Moderate Effect Size: 0.06 ≤ η² \< 0.14*
+>         -   *Large Effect Size: η² ≥ 0.14*
+
+```{r, echo=FALSE}
+# Loop
+variables <- paste0("Q28_", 1:5)
+kw <- function(group_var, variables, data) {
+  lapply(variables, function(var) {
+    kruskal.test(as.formula(paste(var, "~", group_var)), data = df)
+  })
+}
+
+# List of demographic variables
+demographics <- c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census")
+
+# Loop through each demographic variable
+for (demo in demographics) {
+  cat(paste0("\n", demo, " impacts on overall attitudes toward data in policy:\n"))
+  print(kruskal.test(as.formula(paste("value ~", demo)), data = melt_28))
+  
+  cat(paste0("\n", demo, " impacts on each statement about attitudes toward data in policy:\n"))
+  print(kw(demo, variables, df))
+}
+
+# Calculate effect size
+effect_size <- function(response, group, data, k) {
+  H <- kruskal.test(as.formula(paste(response, "~", group)), data = data)$statistic
+  n <- nrow(data)
+  effect_size <- (H - k + 1) / (n - k)
+  return(effect_size)
+}
+
+tests_28 <- list(
+  list(response = "value", group = "age_g", data = melt_28, k = 3),
+  list(response = "Q28_1", group = "age_g", data = df, k = 3),
+  list(response = "value", group = "eth_g", data = melt_28, k = 5),
+  list(response = "Q28_1", group = "eth_g", data = df, k = 5),
+  list(response = "Q28_2", group = "eth_g", data = df, k = 5),
+  list(response = "value", group = "edu_g", data = melt_28, k = 4),
+  list(response = "Q28_1", group = "edu_g", data = df, k = 4),
+  list(response = "Q28_2", group = "edu_g", data = df, k = 4),
+  list(response = "Q28_3", group = "edu_g", data = df, k = 4),
+  list(response = "value", group = "income_g", data = melt_28, k = 3),
+  list(response = "Q28_1", group = "income_g", data = df, k = 3),
+  list(response = "Q28_2", group = "income_g", data = df, k = 3),
+  list(response = "Q28_3", group = "income_g", data = df, k = 3),
+  list(response = "Q28_4", group = "income_g", data = df, k = 3)
+)
+
+lapply(tests_28, function(test) {
+  effect_size(test$response, test$group, test$data, test$k)
+})
+```
+
+### Ordinal Logistic Regression (OLR)
+
+> -   *Parametric test: estimating specific parameters that describe the relationship between the independent variables and the ordinal outcome)*
+>
+> -   *Indicates whether a difference exists and the direction or size of the effect at the specific levels of the variable*
+
+#### **[OLR results]** - **Age, education level, and income level** are associated with attitudes toward a role of data in policy (no multicollinearity among predictors)
+
+> 1\. **Middle-aged people** are **42% less likely** to have a positive attitude toward a role of data in policy compared to old people (p \< 0.01, Odds ratio = 0.58)
+>
+> 2\. **Young age group** are **47% less likely** to have a positive attitude toward a role of data in policy compared to old people (p \< 0.001, Odds ratio = 0.53)
+>
+> 3\. **People with high school to some college education** are **20% less likely** to have a positive attitude toward a role of data in policy compared to people with advanced degree (p \< 0.05, Odds ratio = 0.8)
+>
+> 4\. **People with less than a high school education** are **64% less likely** to have a positive attitude toward a role of data in policy compared to people with advanced degrees (p \< 0.001, Odds ratio = 0.36)
+>
+> 5\. **Low-income individuals** are **32% less likely** to have a positive attitude toward a role of data in policy compared to high-come individuals (p \< 0.001, Odds ratio = 0.68)
+>
+> 6\. Demographic impacts on each statement related to attitudes (It might be redundant and misleading)
+>
+> -   "Data-driven decisions are more reliable than decisions based on opinions or anecdotal evidence": **High school to college group** are **37% less likely** to rate it higher than advanced degree group (p \< 0.05, Odds ratio = 0.63)
+> -   "The use of data in policy-making has led to more transparent government decisions": **Low** (p \< 0.01, Odds ratio = 0.29) and **middle income groups** are **less likely** to rate it higher than high income group (p \< 0.05, Odds ratio = 0.34)
+>
+> *According to Analysis of Deviance, Ethnicity also significantly influences the model fit, but the effect is weaker than the other variables. There was no significant impact of an ethnicity group on the attitudes at the specific variable level. Thus, ethnicity was not included in the factors associated with the atittude toward data in policy.*
+
+```{r, echo = FALSE}
+# source: https://stats.oarc.ucla.edu/r/dae/ordinal-logistic-regression/
+# reporting
+# option 1. https://www.statology.org/how-to-report-logistic-regression-results/
+# option 2. https://web.pdx.edu/~newsomj/cdaclass/ho_ordinal%20regression.pdf
+
+melt_28$value <- as.factor(melt_28$value)
+olr_28 <- polr(value ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = melt_28, Hess = TRUE)
+vif(olr_28) #VIF > 5 indicates a high multicollinearity issue. Consider removing or combining correlated variables
+# Effects of an individual independent variable as a whole on the model fit (Analysis of Deviance for logistic regression)
+Anova(olr_28)
+# Effects of specific levels of the variable 
+coef_28 <- coef(summary(olr_28))
+## calculate and store p values
+p_28 <- pnorm(abs(coef_28[, "t value"]), lower.tail = FALSE) * 2
+## combined table
+coef_28 <- cbind(coef_28, "p_value" = p_28)
+
+#An odds ratio greater than 1 means that an increase in the predictor is associated with higher odds of being in a higher category of the outcome
+or_28 <- exp(cbind(OR = coef(olr_28), confint(olr_28)))
+coef_28 <- coef_28[-c(14:17),]
+coef_28 <- cbind(coef_28, or_28)
+
+# Display statistically significant results only
+coef_28 <- as.data.frame(coef_28)
+coef_28[coef_28$p_value < 0.05,]
+
+# Demographic impacts on each statement related to attitudes 
+perform_olr <- function(data, dependent_var, independent_vars) {
+  data[[dependent_var]] <- as.factor(data[[dependent_var]])
+  olr_model <- polr(as.formula(paste(dependent_var, "~", paste(independent_vars, collapse = " +"))),
+                    data = data, Hess = TRUE)
+  
+  # Get coefficients, calculate p-values, and add to data frame
+  coef_summary <- coef(summary(olr_model))
+  p_values <- pnorm(abs(coef_summary[, "t value"]), lower.tail = FALSE) * 2
+  coef_df <- cbind(as.data.frame(coef_summary), "p_value" = p_values)
+  
+   # Calculate odds ratios (OR) and confidence intervals
+  or_df <- exp(cbind(OR = coef(olr_model), confint(olr_model)))
+  
+  # Remove unnecessary rows (if applicable)
+  coef_df <- coef_df[-c(14:17), ]  # Adjust indices based on your data structure
+  
+  # Combine coefficient summary with odds ratios
+  coef_df <- cbind(coef_df, or_df)
+  
+  # Extract significant results
+  significant_results <- coef_df[coef_df$p_value <= 0.05, ]
+  
+  # Return results as a list
+  list(model = olr_model, significant = significant_results)
+}
+
+# Independent variables
+independent_vars <- c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census")
+
+# List of dependent variables
+dependent_vars <- paste0("Q28_", 1:5)
+
+# Apply the function to each dependent variable and store results in a list
+results_28 <- lapply(dependent_vars, function(var) {
+  perform_olr(df, var, independent_vars)
+})
+
+# View significant results for each dependent variable
+lapply(results_28, function(result) result$significant)
+```
+
+```{r, echo = FALSE, include=FALSE}
+#  #### **[OLR results with three value groups - agree, neither, disagree]** - **Age, education level** are associated with attitudes toward a role of data in policy
+# 
+# melt_28_2$value <- as.factor(melt_28_2$value)
+# olr_28_2 <- polr(value ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = melt_28_2, Hess = TRUE)
+# # Effects of an individual independent variable as a whole on the model fit (Analysis of Deviance for logistic regression)
+# Anova(olr_28_2)
+# # Effects of specific levels of the variable
+# coef_28_2 <- coef(summary(olr_28_2))
+# ## calculate and store p values
+# p_28_2 <- pnorm(abs(coef_28_2[, "t value"]), lower.tail = FALSE) * 2
+# ## combined table
+# coef_28_2 <- cbind(coef_28_2, "p_value" = p_28_2)
+# 
+# #An odds ratio greater than 1 means that an increase in the predictor is associated with higher odds of being in a higher category of the outcome
+# or_28_2 <- exp(cbind(OR = coef(olr_28_2), confint(olr_28_2)))
+# coef_28_2 <- coef_28_2[-c(14:15),]
+# coef_28_2 <- cbind(coef_28_2, or_28_2)
+# 
+# # Display statistically significant results only
+# coef_28_2 <- as.data.frame(coef_28_2)
+# coef_28_2[coef_28_2$p_value < 0.05,]
+```
+
+## **Q29. To what extent do you agree with the following statements? (N = 743)** (exclude "Q29_1. Data collection practices in my community are fair and transparent" from modeling of all statements due to the low reliability score)
+
+> 1\. Three statements about the importance of empowering communities to use data
+>
+> 2\. Responses in 5 point likert scale
+>
+> \- "Strongly disagree" = 1
+>
+> \- "Strongly agree" = 5
+
+### Chi-square test of equality of two proportions
+
+#### **[Results]** - **no significant difference in the proportions of agreement with with the perception of importance of empowering communities to use data across community membership groups** (p = 0.6)
+
+```{r, echo=FALSE}
+# Data manipulation
+# Define the function to recode the Likert scale responses
+likert_29_2 <- function(column) {
+  column <- as.character(column)  
+  column <- dplyr::case_when(
+    column == 1 ~ "disagree",
+    column == 2 ~ "disagree",
+    column == 3 ~ "neither",
+    column == 4 ~ "agree",
+    column == 5 ~ "agree"
+  )
+  return(as.factor(column))  # Convert the column to a factor
+}
+
+# Apply the function to specific columns in the data frame
+df_ver2 <- df %>%
+  mutate(across(c(Q29_1, Q29_2, Q29_3, Q29_4), likert_29_2))
+
+# Change data to long format
+melt_29_2 <- reshape2::melt(df_ver2, 
+                          id.vars = c("gender_g","age_g","eth_g","edu_g","income_g","census"), 
+                          measure.vars = grep("^Q29_", names(df_ver2), value = TRUE) %>% setdiff("Q29_1"))
+
+
+new_29 <- c(
+  "Q29_2" = "Some communities are disproportionately affected by biased data practices",
+  "Q29_3" = "It is important that communities have a voice in decisions about how data is collected and used",
+  "Q29_4" = "Data should be used to promote justice and equity, not just efficiency and profit"
+)
+
+melt_29_2 <- melt_29_2 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_29))
+
+## Test of proportions (community membership & agreement)
+ct_29 <- table(melt_29_2$value, melt_29_2$census)
+prop.test(ct_29["agree",],colSums(ct_29))
+```
+
+### Chi-square test of homogeneity (more than two proportions)
+
+#### **[Results]** - **Age, education level, and income level are associated with positive attitudes toward the role of data in policy**
+
+```{r, echo=FALSE}
+# ## Chi-square test
+# # List of demographic variables
+demographics <- c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census")
+#
+# # Loop through each demographic variable
+for (demo in demographics) {
+   cat(paste0("\n", demo, " impacts on overall attitudes toward data in policy:\n"))
+   print(chisq.test(melt_29_2[[demo]], melt_29_2$value))}
+```
+
+### Kruskal-Wallis test (KW test)
+
+#### **[Kruskal-Wallis test results]** - **Gender, ethnicity, income level** are associated with the perception of importance of empowering communities to use data with small effect size (modeling all statements together)
+
+> 1\. **Gender** significantly impacts overall importance of empowering communities to use data (p \< 0.001, effect size = 0.01)
+>
+> \- "Data collection practices in my community are fair and transparent" (p \< 0.05, effect size = 0.005) (analyzing each statement individually)
+>
+> \- "Some communities are disproportionately affected by biased data practices" (p \< 0.05, effect size = 0.01)
+>
+> \- "Data should be used to promote justice and equity, not just efficiency and profit" (p \< 0.01, effect size = 0.01)
+>
+> 2\. **Age** significantly impacts overall attitudes toward data in policy (p \< 0.05, effect size = 0.003)
+>
+> 3\. **Ethnicity** significantly impacts overall attitudes toward data in policy (p \< 0.05, effect size = 0.003)
+>
+> \-"Data collection practices in my community are fair and transparent" (p \< 0.01, effect size = 0.01)
+>
+> 4\. **Income** significantly impacts overall attitudes toward data in policy. (p \< 0.05, effect size = 0.01)
+
+> > -   *Non-parametric test: no assumptions about the specific form of the relationship between the variables, chi-squared test is a part of calculation*
+> > -   *Indicates whether a difference exists across demographic groups and magnitude of the differences between groups*
+> >     -   [*Magnitude of Effect Size*](https://search.r-project.org/CRAN/refmans/rstatix/html/kruskal_effsize.html) *(Eta-Squared)*
+> >         -   *Small Effect Size: 0.01 ≤ η² \< 0.06*
+> >         -   *Moderate Effect Size: 0.06 ≤ η² \< 0.14*
+> >         -   *Large Effect Size: η² ≥ 0.14*
+
+```{r, echo=FALSE}
+# Change data to long format, excluding Q29_1
+melt_29 <- reshape2::melt(df, 
+                          id.vars = c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census"), 
+                          measure.vars = grep("^Q29_", names(df), value = TRUE) %>% setdiff("Q29_1"))
+
+melt_29 <- melt_29 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_29))
+
+# Loop
+variables <- paste0("Q29_", 1:4)
+
+for (demo in demographics) {
+  cat(paste0("\n", demo, " impact on overall importance of empowering communities to use data:\n"))
+  print(kruskal.test(as.formula(paste("value ~", demo)), data = melt_29))
+  
+  cat(paste0("\n", demo, " impacts on each statement about importance of empowering communities to use data:\n"))
+  print(kw(demo, variables, df))
+}
+
+# Calculate effect size
+tests_29 <- list(
+  list(response = "value", group = "gender_g", data = melt_29, k = 3),
+  list(response = "Q29_1", group = "gender_g", data = df, k = 3),
+  list(response = "Q29_2", group = "gender_g", data = df, k = 3),
+  list(response = "Q29_4", group = "gender_g", data = df, k = 3),
+  list(response = "value", group = "eth_g", data = melt_28, k = 5),
+  list(response = "Q29_1", group = "eth_g", data = df, k = 5),
+  list(response = "value", group = "income_g", data = melt_28, k = 3)
+)
+
+lapply(tests_29, function(test) {
+  effect_size(test$response, test$group, test$data, test$k)
+})
+```
+
+### Ordinal Logistic Regression (OLR)
+
+#### **[OLR results]** - **Gender, ethnicity, age and income level** are associated with the perception of importance of empowering communities to use data (Q29_1 excluded from the data) (multicollinearity among predictors)
+
+> 1\. **Males** are **22% less likely** to support the importance of empowering communities to use data compared to the females (p-value \< 0.01, Odds ratio = 0.78)
+>
+> 2\. **Non-binary** are **99% more likely** to support the importance of empowering communities to use data compared to the females (p-value \< 0.05, Odds ratio = 1.99)
+>
+> 3\. **Black** respondents are **35% less likely** to support empowering communities to use data compared to Asians (p \< 0.05, Odds ratio = 0.65)
+>
+> 4\. **Hispanic** respondents are **39% less likely** to support empowering communities to use data compared to Asians (p \< 0.05, Odds ratio = 0.61)
+>
+> 5\. **White** respondents are **38% less likely** to support empowering communities to use data compared to Asians (p \< 0.01, Odds ratio = 0.62)
+>
+> 6\. **Being young group** is **19% less likely** to support empowering communities to use data compared to being old (p \< 0.05, Odds ratio = 0.81)
+>
+> 7\. Respondents with **low income** are **59% more likely** to support empowering communities to use data compared to the high-income group (p \< 0.05, Odds ratio = 1.59)
+>
+> 8\. Respondents with **middle income** are **71% more likely** to support empowering communities to use data compared to the high-income group (p \< 0.05, Odds ratio = 1.71)
+>
+> 9\. Demographic impacts on the ratings of "Q29_1.Data collection practices in my community are fair and transparent related to attitudes"
+>
+> -   **Black** repondents **increase the odds** of supporting this statement by 2.36 times than Asians (p \< 0.01, Odds ratio = 2.36)
+> -   Respondents with **bachelor's degree** are **42% less likely** to support this statement than those with advanced degrees (p \< 0.05, Odds ratio = 0.58)
+> -   Respondents with a **high school to some college education** are **42% less likely** to support this statement than those with advanced degrees (p \< 0.05, Odds ratio = 0.58)
+>
+> *According to Analysis of Deviance, Gender Age, and Ethnicity affect the model fit.*
+
+> > -   *Parametric test: estimating specific parameters that describe the relationship between the independent variables and the ordinal outcome)*
+> >
+> > -   *Indicates whether a difference exists and the direction or size of the effect at the specific levels of the variable*
+
+```{r, echo = FALSE}
+melt_29$value <- as.factor(melt_29$value)
+olr_29 <- polr(value ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = melt_29, Hess = TRUE)
+vif(olr_29) #VIF > 5 indicates a high multicollinearity issue. Consider removing or combining correlated variables
+# Effects of an individual independent variable as a whole on the model fit (Analysis of Deviance for logistic regression)
+Anova(olr_29)
+# Effects of specific levels of the variable 
+coef_29 <- coef(summary(olr_29))
+## calculate and store p values
+p_29 <- pnorm(abs(coef_29[, "t value"]), lower.tail = FALSE) * 2
+## combined table
+coef_29 <- cbind(coef_29, "p_value" = p_29)
+
+#An odds ratio greater than 1 means that an increase in the predictor is associated with higher odds of being in a higher category of the outcome
+or_29 <- exp(cbind(OR = coef(olr_29), confint(olr_29)))
+coef_29 <- coef_29[-c(14:17),]
+coef_29 <- cbind(coef_29, or_29)
+
+# Display statistically significant results only
+coef_29 <- as.data.frame(coef_29)
+coef_29[coef_29$p_value < 0.05,]
+
+# List of dependent variables
+dependent_vars <- paste0("Q29_", 1:4)
+
+# Apply the function to each dependent variable and store results in a list
+results_29 <- lapply(dependent_vars, function(var) {
+  perform_olr(df, var, independent_vars)
+})
+
+# View significant results for each dependent variable
+lapply(results_29, function(result) result$significant)
+```
+
+## **Q30. How concerned are you about the following issues related to data use in civic engagement? (N = 743)**
+
+> 1.  Eight statements about concerns related to data use in civic engagement
+> 2.  Responses in 3 point likert scale
+>
+> -   "Not at all" = 1
+> -   "Concerned" = 2
+> -   "Extremely concerned" = 3
+> -   "I don't know enough about this issue" = 4 (excluded)
+
+### Chi-square test of equality of two proportions
+
+#### **[Results]**
+
+> 1.  Significant difference in the proportions of people concerned about data use in civic engagement across community membership groups (p \< 0.001, Cohen's h = 0.17 - small effect)
+>     -   Disadvantaged group is more concerned about data use in civic engagement than non-disadvantaged groups (Disadvantaged: 0.93, Non-disadvantaged: 0.88)
+> 2.  Significant difference in the proportions of disadvantaged community across ethnicity, education level, and income level groups
+>     -   Ethnicity & Community membership (p \< 0.001, Cohen's h: 0.29 - medium): White groups are less likely to be placed in disadvantaged areas (other: 0.40, White: 0.27)
+>
+>     -   Education level & Community membership (p \< 0.001, Cohen's h: 0.13 - small): people with a college degree are less likely to be placed in a disadvantaged group (college degree: 0.29, other: 0.35)
+>
+>     -   Income level & Community membership (p \< 0.001, Cohen's h: 0.6 - large): people with a high income level are less likely to be placed in a disadvantaged group (high: 0.09, other: 0.33)
+
+> -   Cohen's h is a measure of the effect size that standardizes the difference between two proportions
+>     -   Small effect ≈ 0.2
+>     -   Medium effect ≈ 0.5
+>     -   Large effect ≈ 0.8
+
+```{r, echo=FALSE}
+# Data manipulation
+# Define the function to recode the Likert scale responses
+likert_30_2 <- function(column) {
+  column <- as.character(column)  
+  column <- dplyr::case_when(
+    column == 1 ~ "no",
+    column == 2 ~ "yes",
+    column == 3 ~ "yes",
+    column == 4 ~ "don't know"
+  )
+  return(as.factor(column))  # Convert the column to a factor
+}
+
+# Apply the function to specific columns in the data frame
+df_ver2 <- df %>%
+  mutate(across(c(Q30_1, Q30_2, Q30_3, Q30_4, Q30_5, Q30_6, Q30_7, Q30_8), likert_30_2))
+
+
+# Change data to long format, excluding Q29_1
+melt_30_2 <- reshape2::melt(df_ver2, 
+                          id.vars = c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census"), 
+                          measure.vars = grep("^Q30_", names(df_ver2), value = TRUE))
+
+new_30 <- c(
+  "Q30_1" = "Data reliability and accuracy",
+  "Q30_2" = "Biases and fairness of the data",
+  "Q30_3" = "Difficulty accessing the necessary data or tools",
+  "Q30_4" = "Fear that data might be misunderstood or misused",
+  "Q30_5" = "Data with underrepresented groups",
+  "Q30_6" = "Transparency of how data is collected, analyzed, and used",
+  "Q30_7" = "Decision-Making considering community needs or values",
+  "Q30_8" = "Ethical implications of how data is collected, shared, or used"
+)
+
+melt_30_2 <- melt_30_2 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_30))
+
+# Remove "I don't know enough about this issue" from the data
+melt_30_2 <- melt_30_2[melt_30_2$value !="don't know",]
+
+## Test of proportions (community membership & concern for data)
+ct_30 <- table(melt_30_2$value, melt_30_2$census)
+prop.test(ct_30["yes",],colSums(ct_30))
+prop_30 <- prop.test(ct_30["yes",],colSums(ct_30))
+
+#The order of the proportions (prop1, prop2) corresponds to the order of the levels in the contingency table (ct_30)
+colnames(ct_30) #prop1 = Disadvantaged, prop2 = Non-disadvantaged
+
+# Calculate Cohen's h
+cat("Q30. Cohen's h for the proportions of people concerned about data use in civic engagement across community membership groups\n")
+print(2 * (asin(sqrt(prop_30$estimate[1]))) - 2 * (asin(sqrt(prop_30$estimate[2]))))
+
+## Test of proportions (community membership & other demographic features)
+melt_30_2 <- melt_30_2 %>%
+  mutate(
+    new_income = if_else(income_g == "High", "High", "other"),
+    new_age = if_else(age_g == "Old", "Old", "other"),
+    new_gender = if_else(gender_g == "Female", "Female", "other"),
+    new_edu = if_else(edu_g == "College Degree", "College Degree", "other"),
+    new_eth = if_else(eth_g == "White", "White", "other")
+  )
+
+# List of new demographic variables
+demo_30 <- c("new_gender", "new_age", "new_eth", "new_edu", "new_income")
+
+# Loop through demographic variables and perform all tasks
+for (demo in demo_30) {
+  cat(paste0("\nDemographic Variable: ", demo, "\n"))
+  ct_table <- table(melt_30_2$census, melt_30_2[[demo]])
+  print(ct_table)  # Display the contingency table
+  prop_test <- prop.test(ct_table["Disadvantaged",], colSums(ct_table))
+  print(prop_test)  # Display the proportion test results
+  # Calculate Cohen's h
+  cohen_h <- 2 * (asin(sqrt(prop_test$estimate[1])) - asin(sqrt(prop_test$estimate[2])))
+  cat(paste0("Cohen's h for ", demo, ": ", round(cohen_h, 3), "\n"))
+  # Display the column levels of the contingency table
+  cat("Column levels for ", demo, ": ", colnames(ct_table), "\n")
+}
+```
+
+### Chi-square test of homogeneity
+
+#### **[Results]**
+
+> 1.  Significant association between community membership and concern for data (p \< 0.001, Cramér's V: 0.08 - weak)
+> 2.  Significant association between demographic features (ethnicity, education level, income level) and community membership
+>     -   Ethnicity & Community membership (p \< 0.001, Cramér's V: 0.17 - mederate)
+>
+>     -   Education level & Community membership (p \< 0.001, Cramér's V: 0.06 - weak)
+>
+>     -   Income level & Community membership (p \< 0.001, Cramér's V: 0.13 - moderate)
+
+> -   Cramér's V is a measure of a comparison of proportions across multiple groups
+>     -   Weak: 0.10
+>     -   Moderate: 0.11 - 0.30
+>     -   Strong: 0.31 and above
+
+```{r, echo=FALSE}
+## Chi-square test of homogeneity (community membership & concern for data) and calculate Cramér's V
+chi_30 <- chisq.test(melt_30_2$census,melt_30_2$value)
+cat(paste0("Community membership association with concern for data:\n"))
+print(sqrt(chi_30$statistic / (sum(chi_30$observed) * 
+                                          min(nrow(chi_30$observed) - 1, 
+                                              ncol(chi_30$observed) - 1))))
+
+## Chi-square test of homogeneity (community membership & other demographic features) and calculate Cramér's V
+perform_chi_sq <- function(variable, group, var_name) {
+  cat(paste0("\n", var_name, " association with community membership:\n"))
+  
+  # Perform chi-square test
+  chi_result <- chisq.test(variable, group)
+  
+  # Print chi-square test result
+  print(chi_result)
+  
+  # Calculate and print Cramér's V
+  cramers_v <- sqrt(chi_result$statistic / 
+                    (sum(chi_result$observed) * 
+                     min(nrow(chi_result$observed) - 1, 
+                         ncol(chi_result$observed) - 1)))
+  cat(paste0("Cramér's V for ", var_name, ": ", round(cramers_v, 3), "\n"))
+}
+
+# List of demographic variables and their names
+demo_var <- list(
+  "Age" = melt_30_2$age_g,
+  "Gender" = melt_30_2$gender_g,
+  "Ethnicity" = melt_30_2$eth_g,
+  "Education" = melt_30_2$edu_g,
+  "Income" = melt_30_2$income_g # Add more variables if needed
+)
+
+# Apply the function for each demographic variable
+for (demo_name in names(demo_var)) {
+  perform_chi_sq(demo_var[[demo_name]], melt_30_2$census, demo_name)
+}
+```
+
+### Kruskal-Wallis test (KW test)
+
+#### **[Kruskal-Wallis test results]** - **Gender, age, ethnicity, education level, income level, and community** are associated with concerns related to data use in civic engagement with small effect size (modeling all statements together)
+
+> 1\. **Gender** significantly impacts overall concerns related to data use in civic engagement (p \< 0.05, effect size = 0.001)
+>
+> 2\. **Age** significantly impacts overall concerns related to data use in civic engagement (p \< 0.001, effect size = 0.004)
+>
+> 3\. **Ethnicity** significantly impacts overall concerns related to data use in civic engagement (p \< 0.001, effect size = 0.02)
+>
+> 4\. **Education level** significantly impacts overall concerns related to data use in civic engagement (p \< 0.001, effect size = 0.01)
+>
+> 5\. **Income level** significantly impacts overall concerns related to data use in civic engagement (p \< 0.001, effect size = 0.004)
+>
+> 6\. **Community** significantly impacts overall concerns related to data use in civic engagement (p \< 0.001, effect size = 0.003)
+
+> > -   *Non-parametric test: no assumptions about the specific form of the relationship between the variables, chi-squared test is a part of calculation*
+> > -   *Indicates whether a difference exists across demographic groups and magnitude of the differences between groups*
+> >     -   [*Magnitude of Effect Size*](https://search.r-project.org/CRAN/refmans/rstatix/html/kruskal_effsize.html) *(Eta-Squared)*
+> >         -   *Small Effect Size: 0.01 ≤ η² \< 0.06*
+> >         -   *Moderate Effect Size: 0.06 ≤ η² \< 0.14*
+> >         -   *Large Effect Size: η² ≥ 0.14*
+
+```{r, echo=FALSE}
+# Change data to long format, excluding Q29_1
+melt_30 <- reshape2::melt(df, 
+                          id.vars = c("gender_g", "age_g", "eth_g", "edu_g", "income_g", "census"), 
+                          measure.vars = grep("^Q30_", names(df), value = TRUE))
+
+melt_30 <- melt_30 %>% dplyr::mutate(variable = dplyr::recode(variable, !!!new_30))
+
+# Remove "I don't know enough about this issue" from the data
+melt_30 <- melt_30[melt_30$value != 4,]
+
+# Loop
+variables <- paste0("Q30_", 1:8)
+
+for (demo in demographics) {
+  cat(paste0("\n", demo, " impact on overall concerns related to data use in civic engagement:\n"))
+  print(kruskal.test(as.formula(paste("value ~", demo)), data = melt_30))
+  
+  cat(paste0("\n", demo, " impacts on concerns related to data use in civic engagement:\n"))
+  print(kw(demo, variables, df))
+}
+
+# Calculate effect size
+tests_30 <- list(
+  list(response = "value", group = "gender_g", data = melt_30, k = 3),
+   list(response = "value", group = "age_g", data = melt_30, k = 3),
+  list(response = "value", group = "eth_g", data = melt_30, k = 5),
+   list(response = "value", group = "edu_g", data = melt_30, k = 4),
+  list(response = "value", group = "income_g", data = melt_30, k = 3),
+   list(response = "value", group = "census", data = melt_30, k = 2)
+)
+
+lapply(tests_30, function(test) {
+  effect_size(test$response, test$group, test$data, test$k)
+})
+```
+
+### Ordinal Logistic Regression (OLR)
+
+> -   *Parametric test: estimating specific parameters that describe the relationship between the independent variables and the ordinal outcome)*
+>
+> -   *Indicates whether a difference exists and the direction or size of the effect at the specific levels of the variable*
+
+#### **[OLR results]** - **Gender, age, ethnicity, education level, income level, and community** are associated with the perception of importance of empowering communities to use data (no multicollinearity among predictors)
+
+> 1\. **Non-binary individuals** are **92% more likely** to support the importance of empowering communities to use data compared to males (p-value \< 0.001, Odds ratio = 1.92)
+>
+> 2\. **Young** respondents are **24% less likely** to support the importance of empowering communities to use data compared to older individuals (p-value \< 0.001, Odds ratio = 0.76)
+>
+> 3\. **Black** respondents are **38% more likely** to support the importance of empowering communities to use data compared to Asians (reference group) (p-value \< 0.01, Odds ratio = 1.38)
+>
+> 4\. **Individuals of multiple ethnicities or other ethnicities** are **36% more likely** to support the importance of empowering communities to use data compared to Asians (reference group) (p-value \< 0.05, Odds ratio = 1.36)
+>
+> 5\. **White** respondentsare **23% less likely** to support the importance of empowering communities to use data compared to Asians (reference group) (p-value \< 0.05, Odds ratio = 0.77)
+>
+> 6\. Respondents with a **high school to some college education** are **43% less likely** to support the importance of empowering communities to use data compared to those with advanced degrees (p-value \< 0.001, Odds ratio = 0.57)
+>
+> 7\. Individuals in the **low-income group** are **114% more likely** to support the importance of empowering communities to use data compared to those in the high-income group (p-value \< 0.001, Odds ratio = 2.14)
+>
+> 8\. **Middle-income group** are **73% more likely** to support the importance of empowering communities to use data compared to those in the high-income group (p-value \< 0.001, Odds ratio = 1.73)
+>
+> 9\. **Non-disadvantaged communities** are **11% less likely** to support the importance of empowering communities to use data compared to those from disadvantaged census areas (p-value \< 0.05, Odds ratio = 0.89)
+
+*According to Analysis of Deviance, all demographic features affect the model fit.*
+
+```{r, echo = FALSE}
+melt_30$value <- as.factor(melt_30$value)
+olr_30 <- polr(value ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = melt_30, Hess = TRUE)
+vif(olr_30) #VIF > 5 indicates a high multicollinearity issue. Consider removing or combining correlated variables
+
+# Effects of an individual independent variable as a whole on the model fit (Analysis of Deviance for logistic regression)
+Anova(olr_30)
+# Effects of specific levels of the variable 
+coef_30 <- coef(summary(olr_30))
+## calculate and store p values
+p_30 <- pnorm(abs(coef_30[, "t value"]), lower.tail = FALSE) * 2
+## combined table
+coef_30 <- cbind(coef_30, "p_value" = p_30)
+
+#An odds ratio greater than 1 means that an increase in the predictor is associated with higher odds of being in a higher category of the outcome
+or_30 <- exp(cbind(OR = coef(olr_30), confint(olr_30)))
+coef_30 <- coef_30[-c(14:17),]
+coef_30 <- cbind(coef_30, or_30)
+
+# Display statistically significant results only
+coef_30 <- as.data.frame(coef_30)
+coef_30[coef_30$p_value < 0.05,]
+
+# List of dependent variables
+dependent_vars <- paste0("Q30_", 1:8)
+
+# Apply the function to each dependent variable and store results in a list
+results_30 <- lapply(dependent_vars, function(var) {
+  perform_olr(df, var, independent_vars)
+})
+
+# View significant results for each dependent variable
+lapply(results_30, function(result) result$significant)
+```
+
+## [Section 6] - Q32, Q33
+
+## **Q32. What types of support would make you more likely to engage in local policy discussions or activities? (N = 740)**
+
+> 1.  Ingest: Reading and processing text data
+> 2.  Prepare: Associating text with metadata
+> 3.  Estimate: Estimating the structural topic model
+> 4.  Evaluate: model selection and search (optimal number of topic = 20)
+> 5.  Understand: Interpreting the STM
+
+```{r, echo = FALSE, results='hide'}
+# N = 740 (NA = 1, Blank = 2)
+sum(is.na(df$Q32))
+sum(df$Q32 == "", na.rm = TRUE)
+
+# 1. Ingest: Reading and processing text data
+processed_Q32 <- textProcessor(
+  documents = df$Q32[!is.na(df$Q32) & df$Q32 != ""], 
+  metadata = df[!is.na(df$Q32) & df$Q32 != "", ]
+)
+
+# 2. Prepare: Associating text with metadata
+prep_Q32 <- prepDocuments(processed_Q32$documents, #Clean and tokenize the raw text: Remove punctuation, stopwords, and other noise.
+                      processed_Q32$vocab, #Extract vocabulary: Identify the unique words used across the documents
+                      processed_Q32$meta) #Align metadata with cleaned documents: Ensures metadata corresponds to the retained documents after filtering
+
+```
+
+> -   *Metrics to evaluate STM model performance*
+>
+>     -   Held-out likelihood, semantic coherence, exclusivity, lowerbound: the higher, the better
+>     -   Residuals: the lower, the better
+>     -   **k=20** seems to be optimal that balances values of metrics evaluating the performance of the STM model (tested from 5 to 35 since we have more than 500 documents)
+
+```{r, echo = FALSE, include=FALSE}
+# 4. Evaluate: model selection and search
+## Model initialization for a fixed number of topics: use an initialization based on the method of moments, which is deterministic and globally consistent under reasonable conditions (init.type = "Spectral")
+
+# k_Q32 <- searchK(prep_Q32$documents, prep_Q32$vocab, K = c(5, 35), prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = prep_Q32$meta)
+
+# 3. Estimate: Estimating the structural topic model
+stm_Q32 <- stm(documents = prep_Q32$documents,
+                 vocab = prep_Q32$vocab,
+                 K = 20,
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+                 max.em.its = 75, 
+                data = prep_Q32$meta,
+                 init.type = "Spectral", seed=1234)
+```
+
+```{r, echo = FALSE, include=FALSE}
+# Ensure global seed
+set.seed(1234)
+
+# Fit STM model
+stm_Q32_2 <- stm(documents = prep_Q32$documents, 
+               vocab = prep_Q32$vocab, 
+               K = 20, 
+               prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+               data = prep_Q32$meta, 
+               max.em.its = 75, 
+               init.type = "Spectral", seed = 1234)
+
+# Estimate effects
+set.seed(1234)
+effect_Q32_1 <- estimateEffect(1:20 ~ gender_g + age_g + eth_g + edu_g + income_g + census, 
+                                stmobj = stm_Q32_2, 
+                                metadata = prep_Q32$meta, 
+                                uncertainty = "Global")
+
+# Re-run to check consistency
+set.seed(1234)
+effect_Q32_1 <- estimateEffect(1:20 ~ gender_g + age_g + eth_g + edu_g + income_g + census, 
+                                stmobj = stm_Q32_2, 
+                                metadata = prep_Q32$meta, 
+                                uncertainty = "Global")
+
+# Verify identical results
+identical(effect_Q32_1, effect_Q32_1)  # FALSE
+```
+
+### Interpreting topics - Five topics and words with the highest probability of appearing in the topic
+
+```{r, echo = FALSE}
+#searchK
+# Held-out likelihood, semantic coherence, exclusivity, Lowerbound: the higher, the better
+# Residuals: the lower, the better
+# k=20 seems to be optimal that balances values of metrics evaluating the performance of the STM model
+# plot(k_Q32)
+
+# Interpret labelTopics
+## Highest Prob: Word with the highest probability of appearing in the topic.
+## FREX: A combination of frequency and exclusivity, identifying words that are frequent in a topic but also exclusive to it.
+## Lift: How much more likely a word is to appear in a topic compared to its overall frequency across topics.
+## Score: An overall importance score for a word, factoring in its probability, exclusivity, and frequency.
+labelTopics(stm_Q32)
+plot(stm_Q32, type = "summary", labeltype = "frex", n = 5)
+plot(stm_Q33, type = "summary", labeltype = "frex", n = 5)
+
+## Plot-topic proportions
+# Q32_Define custom labels for the topics
+Q32_labels <- c(
+  "Topic 1: Support from various sources",
+  "Topic 2: Diverse channels for participation",
+  "Topic 3: Accessible information about participation",
+  "Topic 4: Support for caregiving",
+  "Topic 5: No consistent theme",
+  "Topic 6: Satisfied with the current engagement",
+  "Topic 7: Information about actual changes",
+  "Topic 8: Design participationr representing community voice",
+  "Topic 9: Support on understanding data",
+  "Topic 10: Understanding of local issues",
+  "Topic 11: Diverse platforms and training for participation",
+  "Topic 12: Advertisement and announcements of the issues",
+  "Topic 13: Information about actual changes",
+  "Topic 14: Accessible information about participation",
+  "Topic 15: Transparency in communication from local officials",
+  "Topic 16: Make participation easier",
+  "Topic 17: Diverse sources of participation information",
+  "Topic 18: Make participation easier",
+  "Topic 19: Unbiased representation of data collection",
+  "Topic 20: Diverse channels for participation"
+)
+
+# Get the topic proportions (mean over documents)
+topic_proportions <- colMeans(stm_Q32$theta)*100
+
+# Order topics by proportions
+ordered_indices <- order(topic_proportions, decreasing = TRUE)
+topic_proportions <- topic_proportions[ordered_indices]
+custom_labels <- Q32_labels[ordered_indices]
+
+
+# Q33_Define custom labels for the topics
+Q33_labels <- c(
+  "Topic 1: Communicate via diverse channels",
+  "Topic 2: Listen to people's interests",
+  "Topic 3: Transparent and unbiased decision making",
+  "Topic 4: Communicate via diverse channels",
+  "Topic 5: Transparent and unbiased decision making",
+  "Topic 6: Communicate via diverse channels",
+  "Topic 7: Inclusive participation methods",
+  "Topic 8: Promotions for participation",
+  "Topic 9: Inform people of participation opportunity",
+  "Topic 10: Accountability through listening and responding to citizens",
+  "Topic 11: Reflect normal people's actual needs",
+  "Topic 12: Reflect normal people's actual needs",
+  "Topic 13: Communicate via diverse channels",
+  "Topic 14: Provide transparent and detailed data about issues",
+  "Topic 15: Engage diverse stakeholders",
+  "Topic 16: Reflect normal people's actual needs",
+  "Topic 17: Open dialogue in policymaking",
+  "Topic 18: Easier and accessible participation",
+  "Topic 19: Accountability through actions",
+  "Topic 20: Avoid divisive or irrelevant issues"
+)
+
+
+# Get the topic proportions (mean over documents)
+topic_proportions2 <- colMeans(stm_Q33$theta)*100
+
+# Order topics by proportions
+ordered_indices2 <- order(topic_proportions2, decreasing = TRUE)
+topic_proportions2 <- topic_proportions2[ordered_indices2]
+custom_labels2 <- Q33_labels[ordered_indices2]
+
+## Combine plots_long
+png("plot_topics.png", width = 3500, height = 5000, res = 300)
+par(mfrow = c(2, 1), mar = c(4, 2, 4, 2))
+
+# Plot1
+plot(
+  x = topic_proportions,
+  y = rev(seq_along(topic_proportions)),
+  type = "n",  # Set up the plot without plotting points
+  xlab = "",
+  ylab = "",
+  xlim = c(0, max(topic_proportions)+10),
+  xaxt = "n",
+  yaxt = "n",  
+  main = "Topic Proportions for Needs",
+  cex.axis = 1,
+  cex.main = 1.8
+)
+
+# Create custom x-axis labels with % symbol
+x_axis_ticks <- seq(0, max(topic_proportions, na.rm = TRUE)+10, by = 2)
+x_axis_labels <- paste0(x_axis_ticks, "%")
+# Add custom x-axis with percentage labels
+axis(
+  side = 1,  # Bottom axis
+  at = x_axis_ticks,  # Tick positions
+  labels = x_axis_labels,  # Custom labels with %
+  cex.axis = 1  # Adjust font size of the axis labels
+)
+
+# Add horizontal lines for each topic
+segments(
+  x0 = 0,
+  y0 = rev(seq_along(topic_proportions)),
+  x1 = topic_proportions,
+  y1 = rev(seq_along(topic_proportions)),
+  col = "darkblue",
+  lwd = 2
+)
+
+# Add topic labels on the right side of each line
+text(
+  x = topic_proportions, + 0.25,  # Position slightly to the right of the line
+  y = rev(seq_along(topic_proportions)),
+  labels = custom_labels,
+  pos = 4,  # Text on the right
+  cex = 1.3
+  #font = 2# Adjust text size
+)
+
+## Plot2
+plot(
+  x = topic_proportions2,
+  y = rev(seq_along(topic_proportions2)),
+  type = "n",  # Set up the plot without plotting points
+  xlab = "",
+  ylab = "",
+  xlim = c(0, max(topic_proportions2)+10),
+  xaxt = "n",
+  yaxt = "n",  
+  main = "Topic Proportions for Suggestions",
+  cex.axis = 1,
+  cex.main = 1.8
+)
+
+# Create custom x-axis labels with % symbol
+x_axis_ticks2 <- seq(0, max(topic_proportions2, na.rm = TRUE)+10, by = 2)
+x_axis_labels2 <- paste0(x_axis_ticks2, "%")
+# Add custom x-axis with percentage labels
+axis(
+  side = 1,  # Bottom axis
+  at = x_axis_ticks2,  # Tick positions
+  labels = x_axis_labels2,  # Custom labels with %
+  cex.axis = 1  # Adjust font size of the axis labels
+)
+
+# Add horizontal lines for each topic
+segments(
+  x0 = 0,
+  y0 = rev(seq_along(topic_proportions2)),
+  x1 = topic_proportions2,
+  y1 = rev(seq_along(topic_proportions2)),
+  col = "darkblue",
+  lwd = 2 
+)
+
+# Add topic labels on the right side of each line
+text(
+  x = topic_proportions2, + 0.25,  # Position slightly to the right of the line
+  y = rev(seq_along(topic_proportions2)),
+  labels = custom_labels2,
+  pos = 4,  # Text on the right
+  cex = 1.3
+  #font = 2# Adjust text size
+)
+
+dev.off
+
+# # Q33 topics
+# png("Q33_topics.png", width = 4800, height = 3000, res = 300)
+# par(mfrow = c(1, 1), mar = c(1, 1, 1, 1)) 
+# ## Plot2
+# plot(
+#   x = topic_proportions2,
+#   y = rev(seq_along(topic_proportions2)),
+#   type = "n",  # Set up the plot without plotting points
+#   xlab = "",
+#   ylab = "",
+#   xlim = c(0, max(topic_proportions2)+10),
+#   xaxt = "n",
+#   yaxt = "n",  
+#   main = "Topic Proportions for Suggestions",
+#   cex.axis = 1,
+#   cex.main = 1.5
+# )
+# 
+# # Create custom x-axis labels with % symbol
+# x_axis_ticks2 <- seq(0, max(topic_proportions2, na.rm = TRUE)+10, by = 2)
+# x_axis_labels2 <- paste0(x_axis_ticks2, "%")
+# # Add custom x-axis with percentage labels
+# axis(
+#   side = 1,  # Bottom axis
+#   at = x_axis_ticks2,  # Tick positions
+#   labels = x_axis_labels2,  # Custom labels with %
+#   cex.axis = 1  # Adjust font size of the axis labels
+# )
+# 
+# # Add horizontal lines for each topic
+# segments(
+#   x0 = 0,
+#   y0 = rev(seq_along(topic_proportions2)),
+#   x1 = topic_proportions2,
+#   y1 = rev(seq_along(topic_proportions2)),
+#   col = "darkblue",
+#   lwd = 2 
+# )
+# 
+# # Add topic labels on the right side of each line
+# text(
+#   x = topic_proportions2, + 0.005,  # Position slightly to the right of the line
+#   y = rev(seq_along(topic_proportions2)),
+#   labels = custom_labels2,
+#   pos = 4,  # Text on the right
+#   cex = 1.2,  # Adjust text size
+#   font = 2
+# )
+# 
+# dev.off
+
+## Combine plots_wide
+png("plot_topics_wide.png", width = 7500, height = 3300, res = 300)
+par(mfrow = c(1, 2), mar = c(3, 1, 4, 1))  # Adjust margins for labels and titles
+
+# Plot 1: Needs
+plot(
+  x = topic_proportions,
+  y = rev(seq_along(topic_proportions)) * 0.4,  # Reduce vertical gaps
+  type = "n",
+  xlab = "",
+  ylab = "",
+  xlim = c(0, max(topic_proportions) + 5),
+  xaxt = "n",
+  yaxt = "n",
+  main = "",
+  cex.axis = 1
+)
+title("Topic Proportions for Needs", line = 2, cex.main = 2)
+
+# Custom x-axis with %
+x_axis_ticks <- seq(0, max(topic_proportions, na.rm = TRUE) + 5, by = 2)
+x_axis_labels <- paste0(x_axis_ticks, "%")
+axis(
+  side = 1,
+  at = x_axis_ticks,
+  labels = x_axis_labels,
+  cex.axis = 1
+)
+
+# Gridlines
+abline(v = x_axis_ticks, col = "lightgray", lty = "dotted")
+
+# Horizontal lines for topics
+segments(
+  x0 = 0,
+  y0 = rev(seq_along(topic_proportions)) * 0.4,
+  x1 = topic_proportions,
+  y1 = rev(seq_along(topic_proportions)) * 0.4,
+  col = "darkblue",
+  lwd = 3
+)
+
+# Topic labels
+text(
+  x = topic_proportions + 0.2,
+  y = rev(seq_along(topic_proportions)) * 0.4,
+  labels = custom_labels,
+  pos = 4,
+  cex = 1.2, 
+  font = 2
+)
+
+# Plot 2: Suggestions
+plot(
+  x = topic_proportions2,
+  y = rev(seq_along(topic_proportions2)) * 0.4,  # Reduce vertical gaps
+  type = "n",
+  xlab = "",
+  ylab = "",
+  xlim = c(0, max(topic_proportions2) + 5),
+  xaxt = "n",
+  yaxt = "n",
+  main = "",
+  cex.axis = 1
+)
+title("Topic Proportions for Suggestions", line = 2, cex.main = 2)
+
+# Custom x-axis with %
+x_axis_ticks2 <- seq(0, max(topic_proportions2, na.rm = TRUE) + 5, by = 2)
+x_axis_labels2 <- paste0(x_axis_ticks2, "%")
+axis(
+  side = 1,
+  at = x_axis_ticks2,
+  labels = x_axis_labels2,
+  cex.axis = 1
+)
+
+# Gridlines
+abline(v = x_axis_ticks2, col = "lightgray", lty = "dotted")
+
+# Horizontal lines for topics
+segments(
+  x0 = 0,
+  y0 = rev(seq_along(topic_proportions2)) * 0.4,
+  x1 = topic_proportions2,
+  y1 = rev(seq_along(topic_proportions2)) * 0.4,
+  col = "darkblue",
+  lwd = 3
+)
+
+# Topic labels
+text(
+  x = topic_proportions2 + 0.2,
+  y = rev(seq_along(topic_proportions2)) * 0.4,
+  labels = custom_labels2,
+  pos = 4,
+  cex = 1.2,
+  font = 2
+)
+
+dev.off()
+
+###############################################################################
+
+# Topic proportions
+colMeans(stm_Q32$theta)
+
+# Wordcloud
+for (i in 1:5) {
+  cloud(stm_Q32, topic = i, scale = c(3, 1), max.words = 15)
+}
+
+# Documents highly associated with particular topics
+thoughts_Q32 <- list()
+
+for (topic in 1:20) {
+  thoughts_Q32[[topic]] <- findThoughts(
+    stm_Q32, 
+    texts = df$Q32[as.numeric(rownames(prep_Q32$meta))], 
+    n = 2, 
+    topics = topic
+  )$docs[[1]]
+}
+
+for (topic in 1:20) {
+  cat(sprintf("Topic %d:\n", topic))
+  print(thoughts_Q32[[topic]])
+  cat("\n")
+}
+
+# # Documents highly associated with particular topics
+# thought4 <- findThoughts(stm_Q32, texts = df$Q32[as.numeric(rownames(prep_Q32$meta))], n = 2, topics = 4)$docs[[1]]
+# thought1 <- findThoughts(stm_Q32, texts = df$Q32[as.numeric(rownames(prep_Q32$meta))], n = 2, topics = 1)$docs[[1]]
+# par(mfrow = c(1, 2), mar = c(0.5, 0.5, 1, 0.5))
+# thought5 <- findThoughts(stm_Q32, texts = df$Q32[as.numeric(rownames(prep_Q32$meta))], n = 2, topics = 5)$docs[[1]]
+# plotQuote(thought1, width = 30, main = "Topic 1")
+# plotQuote(thought4, width = 30, main = "Topic 4")
+# plotQuote(thought5, width = 30, main = "Topic 5")
+```
+
+### Topic prevalence: Understanding how different topics vary across specific groups or conditions and assessing the effect of covariates on the occurrence of topics
+
+#### Demographic factors that have a statistically significant effect on topic prevalence: **age, gender, ethnicity, education level, and communities** (income level does not have any impacts on the topic prevalence)
+
+> ```         
+> -   Topic 1
+>     * Gender
+>     - Males are likely to increase the prevalence of Topic 1 by 0.02 compared to Females (p < 0.01)
+>     * Ethnicity
+>     - Black people are likely to increase the prevalence of Topic 1 by 0.04 compared to Asian people (p < 0.05)
+>     - Multi-racial people are likely to decrease the prevalence of Topic 1 by 0.04 compared to Asian people (p < 0.01)
+>     * Education level
+>     - People with Bachelor's degree and high school to college education are likely to decrease the prevalence of Topic 1 by 0.02 compared to people with Advanced degree (p < 0.05)
+>     - People with less than high school education are likely to decrease the prevalence of Topic 1 by 0.08 compared to people with Advanced degree (p < 0.05)
+>
+> -   Topic 2
+>     * Gender
+>     - Males are likely to increase the prevalence of Topic 2 by 0.01 compared to Females (p < 0.05)
+>     * Ethnicity
+>     - Black people are likely to increase the prevalence of Topic 2 by 0.02 compared to Asian people (p < 0.05)
+>     * Education level
+>     - People with Bachelor's degree are likely to decrease the prevalence of Topic 2 by 0.01 compared to people with Advanced degree (p < 0.05)
+>     - People with High school to college education are likely to decrease the prevalence of Topic 2 by 0.02 compared to people with Advanced degree (p < 0.01)
+>
+> -   Topic 3
+>     * Ethinicity
+>     - Multi-racial and White people are likely to increase the prevalence of Topic 3 by 0.04 compared to Asian people (p < 0.05, p < 0.01)
+>     * Education level
+>     - People with Bachelor's degree and High school to college education are likely to increase the prevalence of Topic 3 by 0.05 compared to people with Advanced degree (p < 0.001)
+>     - People with less than High school education are likely to increase the prevalence of Topic 3 by 0.12 compared to people with Advanced degree (p < 0.05)
+>
+> -   Topic 4
+>     * Education level
+>     - People with Less than high school education are likely to decrease the prevalence of Topic 4 by 0.1 compared to people with Advanced degree (p < 0.05)
+>
+> -   Topic 5
+>     * Age
+>     - Old people are likely to decrease the prevalence of Topic 5 by 0.08 compared to Middle-aged people (p < 0.001)
+>     * Ethnicity
+>     - Black people are likely to decrease the prevalence of Topic 5 by 0.08 compared to Asian people (p < 0.001)
+> ```
+
+```{r, echo = FALSE}
+## Change the reference group of estimateEffect
+prep_Q32$meta$census <- as.factor(prep_Q32$meta$census)
+prep_Q32$meta$census <- relevel(prep_Q32$meta$census, ref = "Non-disadvantaged")
+prep_Q32$meta$eth_g <- as.factor(prep_Q32$meta$eth_g)
+prep_Q32$meta$eth_g <- relevel(prep_Q32$meta$eth_g, ref = "White")
+
+# Estimate the effect of demographic factors on topic prevalence (how frequently each topic appears in the dataset)
+## Understanding how different topics vary across specific groups or conditions
+## Assessing the effect of covariates on the occurrence of topics
+set.seed(1234)
+effect_Q32 <- estimateEffect(1:20 ~ gender_g + age_g + eth_g + edu_g + income_g + census, stmobj = stm_Q32, metadata = prep_Q32$meta, uncertainty = "Global")
+summary(effect_Q32)
+# Extract summary of effect estimates
+#summary_Q32 <- summary(effect_Q32)
+
+# Create an empty data frame to store results
+Q32_summary <- data.frame()
+
+# Loop through topics to extract significant coefficients
+for (topic in 1:length(summary_Q32$tables)) {
+  topic_table <- summary_Q32$tables[[topic]]  # Get table for each topic
+  topic_name <- paste("Topic", topic)         # Topic name
+  
+  # Convert to a data frame and add row names as a new column
+  topic_table_df <- as.data.frame(topic_table)
+  topic_table_df$Variable <- rownames(topic_table)  # Add variable names
+  
+  # Filter rows with p-value < 0.05
+  significant <- topic_table_df %>%
+    filter(`Pr(>|t|)` < 0.05)
+  
+  # Add topic name to the results
+  if (nrow(significant) > 0) {
+    significant$Topic <- topic_name
+    Q32_summary <- bind_rows(Q32_summary, significant)
+  }
+}
+
+# Rename columns for clarity
+colnames(Q32_summary) <- c(
+  "Estimate", "Std.Error", "t-value", "P-value", "Variable", "Topic"
+)
+
+# Reorder columns
+Q32_summary <- Q32_summary %>%
+  select(Topic, Variable, Estimate, Std.Error, `t-value`, `P-value`)
+
+# Save it as csv
+write.csv(Q32_summary, "Q32_summary.csv", row.names = FALSE)
+
+# Summary (eth, income, community only)
+iv <- c("eth_gAsian", "eth_gBlack", "eth_gHispanic", "censusDisadvantaged", "eth_gMulti-racial")
+
+Q32_summary2 <- Q32_summary %>% filter(Variable %in% iv)
+
+write.csv(Q32_summary2, "Q32_summary_iv.csv", row.names = FALSE)
+
+# Interaction effects
+set.seed(1234)
+effect_Q32_interaction <- estimateEffect(1:20 ~ gender_g + age_g + edu_g + income_g + eth_g + census + census:income_g, stmobj = stm_Q32, metadata = prep_Q32$meta, uncertainty = "Global")
+#summary(effect_Q32_interaction)
+
+# Extract summary of effect estimates
+summary_Q32_inter <- summary(effect_Q32_interaction)
+
+# Create an empty data frame to store results
+Q32_interaction <- data.frame()
+
+# Loop through topics to extract significant coefficients
+for (topic in 1:length(summary_Q32_inter$tables)) {
+  topic_table <- summary_Q32_inter$tables[[topic]]  # Get table for each topic
+  topic_name <- paste("Topic", topic)         # Topic name
+  
+  # Convert to a data frame and add row names as a new column
+  topic_table_df <- as.data.frame(topic_table)
+  topic_table_df$Variable <- rownames(topic_table)  # Add variable names
+  
+  # Filter rows with p-value < 0.05
+  significant <- topic_table_df %>%
+    filter(`Pr(>|t|)` < 0.05)
+  
+  # Add topic name to the results
+  if (nrow(significant) > 0) {
+    significant$Topic <- topic_name
+    Q32_interaction <- bind_rows(Q32_interaction, significant)
+  }
+}
+
+# Rename columns for clarity
+colnames(Q32_interaction) <- c(
+  "Estimate", "Std.Error", "t-value", "P-value", "Variable", "Topic"
+)
+
+# Reorder columns
+Q32_interaction <- Q32_interaction %>%
+  select(Topic, Variable, Estimate, Std.Error, `t-value`, `P-value`)
+
+# Save it as csv
+write.csv(Q32_interaction, "Q32_summary_interaction.csv", row.names = FALSE)
+
+
+
+# # Display statistically significant results only  
+# coeffs_Q32 <- lapply(summary(effect_Q32)$tables, as.data.frame)
+# filtered_Q32 <- lapply(coeffs_Q32, function(df) {
+#   df[df$`Pr(>|t|)` <= 0.05, ]  
+# })
+# 
+# lapply(seq_along(coeffs_Q32), function(i) {
+#   result <- coeffs_Q32[[i]][coeffs_Q32[[i]]$`Pr(>|t|)` <= 0.05, ]
+#   if (nrow(result) > 0) {
+#     title <- paste("Significant results for Topic", i)
+#     list(Title = title, Results = result)
+#   } else {
+#     list(Title = paste("No significant results for Topic", i), Results = NULL)
+#   }
+# })
+
+# Plot the effect of age on topic prevalence
+plot(effect_Q32, covariate = "age_g", topics=1, main = "Effect of age")
+par(mar = c(5, 16, 4, 2) + 0.1)
+plot(effect_Q32, covariate = "census", topics=7, main = "Effect of community membership")
+# plot(effect_Q32, covariate = "gender_g", topics = c(1,2), main = "Effect of gender")
+# plot(effect_Q32, covariate = "eth_g", topics = c(2,3,5), main = "Effect of ethnicity")
+# plot(effect_Q32, covariate = "edu_g", topics = c(1,2,3,4), main = "Effect of education level")
+```
+
+### Topical content: Explores how the words associated with a topic (topic content) are influenced by covariates (discuss whether to include it)
+
+> ```         
+> -   Topic 1
+>     * Female: support, community
+>     * Male: local, clear
+>     * Asian: support, encourage
+>     * Black: local, clear
+>     * Advanced: platform, provide
+>     * Bachelor: support, community
+> -   Topic 2
+>     * Female: think, change
+>     * Male: engage, policies
+>     * Advanced: policy, engage
+>     * Bachelor: make
+> -   Topic 3
+>     * Asian: outreach, hard, person
+>     * Black: issue
+>     * Advanced: effect, citizen, time
+>     * Bachelor: voice, opinion
+> -   Topic 4
+>     * Advanced: data, discuss
+>     * Bachelor: inform, like, meet
+> -   Topic 5
+>     * Middle-age: people
+>     * Old: farm, seperate
+>     * Asian: activity, participate
+>     * Black: people, forum
+> ```
+
+```{r, echo = FALSE, results='hide'}
+# Census
+prep_Q32$meta$census <- factor(prep_Q32$meta$census, levels = c("Disadvantaged","Non-disadvantaged"))
+
+stm_Q32_census <- stm(documents = prep_Q32$documents, 
+                 vocab = prep_Q32$vocab, 
+                 K = 20, 
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, content = ~ census,
+                 data = prep_Q32$meta, 
+                 max.em.its = 75,
+                 init.type = "Spectral", seed=1234)
+
+#Top words comparison
+# Loop over the topics to create the plots and store them
+png("Q32_plot_census.png", width = 5000, height = 2500, res = 300)
+par(mfrow = c(1, 3), mar = c(2, 2, 2, 2))  # Adjust margins
+
+# Loop over the topics to create the plots
+topics <- c(7, 16, 19) 
+for (topic in topics) {
+  # Plot the perspectives without the x-axis labels
+  plot(
+    stm_Q32_census,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1.8)}
+dev.off()
+
+## Ethnicity
+### Asian
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q32) & df$Q32 != "" & 
+                 (df$eth_g %in% c("Asian", "White"))  # Correct logical condition
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q32[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# 3. Process text
+processed_Q32_A <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+# 4. Prepare documents and metadata for STM
+prep_Q32_A <- prepDocuments(processed_Q32_A$documents, 
+                            processed_Q32_A$vocab,
+                            processed_Q32_A$meta) 
+
+# 5. Ensure 'eth_g' levels are set correctly
+prep_Q32_A$meta$eth_g <- factor(prep_Q32_A$meta$eth_g, levels = c("Asian", "White"))
+
+# 6. Fit STM model
+stm_Q32_eth_A <- stm(
+  documents = prep_Q32_A$documents, 
+  vocab = prep_Q32_A$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q32_A$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+### Black
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q32) & df$Q32 != "" & 
+                 (df$eth_g %in% c("Black", "White"))  
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q32[filtered_rows]  
+metadata_filtered <- df[filtered_rows, ]     
+
+# 3. Process text
+processed_Q32_B <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered)
+
+# 4. Prepare documents and metadata for STM
+prep_Q32_B <- prepDocuments(processed_Q32_B$documents, 
+                            processed_Q32_B$vocab,
+                            processed_Q32_B$meta) 
+
+prep_Q32_B$meta$eth_g <- factor(prep_Q32_B$meta$eth_g, levels = c("Black", "White"))
+
+# 6. Fit STM model
+stm_Q32_eth_B <- stm(
+  documents = prep_Q32_B$documents, 
+  vocab = prep_Q32_B$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q32_B$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+### Hispanic
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q32) & df$Q32 != "" & 
+                 (df$eth_g %in% c("Hispanic", "White")) 
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q32[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# 3. Process text
+processed_Q32_H <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+# 4. Prepare documents and metadata for STM
+prep_Q32_H <- prepDocuments(processed_Q32_H$documents, 
+                            processed_Q32_H$vocab,
+                            processed_Q32_H$meta) 
+
+prep_Q32_H$meta$eth_g <- factor(prep_Q32_H$meta$eth_g, levels = c("Hispanic", "White"))
+
+# 6. Fit STM model
+stm_Q32_eth_H <- stm(
+  documents = prep_Q32_H$documents, 
+  vocab = prep_Q32_H$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q32_H$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+### Multi-racial
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q32) & df$Q32 != "" & 
+                 (df$eth_g %in% c("Multi-racial", "White")) 
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q32[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# 3. Process text
+processed_Q32_M <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+# 4. Prepare documents and metadata for STM
+prep_Q32_M <- prepDocuments(processed_Q32_M$documents, 
+                            processed_Q32_M$vocab,
+                            processed_Q32_M$meta) 
+
+prep_Q32_M$meta$eth_g <- factor(prep_Q32_M$meta$eth_g, levels = c("Multi-racial", "White"))
+
+# 6. Fit STM model
+stm_Q32_eth_M <- stm(
+  documents = prep_Q32_M$documents, 
+  vocab = prep_Q32_M$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q32_M$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+# Q32_Ethnicity plot
+png("Q32_plot_eth.png", width = 5000, height = 4000, res = 300)
+par(mfrow = c(4, 4), mar = c(1, 1, 1, 1))
+plot(
+    stm_Q32_eth_A ,
+    type = "perspectives",
+    topics = 1,
+    text.cex = 0.8)
+
+topics <- c(1, 2, 3, 4, 5, 9, 11, 12, 14, 16, 17, 19) 
+for (topic in topics) {
+  plot(
+    stm_Q32_eth_B,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 0.8)}
+
+topics <- c(1, 3) 
+for (topic in topics) {
+  plot(
+    stm_Q32_eth_H,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 0.8)}
+
+plot(
+    stm_Q32_eth_M,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 0.8)
+dev.off()
+
+# For paper
+png("Q32_plot_combined_eth.png", width = 4500, height = 2300, res = 300)
+par(mfrow = c(2, 3), mar = c(0.8, 0.8, 0.8, 0.8))
+plot(
+    stm_Q32_eth_A ,
+    type = "perspectives",
+    topics = 1,
+    text.cex = 1)
+
+topics <- c(3, 12, 16) 
+for (topic in topics) {
+  plot(
+    stm_Q32_eth_B,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1)}
+
+plot(
+    stm_Q32_eth_H,
+    type = "perspectives",
+    topics = 3,
+    text.cex = 1)
+
+plot(
+    stm_Q32_eth_M,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1)
+
+png("Q32_plot_combined_census.png", width = 4500, height = 2200, res = 300)
+par(mfrow = c(1, 3), mar = c(0.8, 0.8, 0.8, 0.8))
+topics <- c(7, 16, 19) 
+for (topic in topics) {
+  plot(
+    stm_Q32_census,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1.3)}
+dev.off()
+
+# png("Q32_plot_census.png", width = 3000, height = 1000)
+# par(mfrow = c(1, 3), mar = c(2, 2, 4, 2), font.axis = 2)  # Adjust margins (bottom, left, top, right)
+# for (topic in topics) {
+#   par(cex.lab = 10)
+#   plot(stm_Q32_census,
+#     type = "perspectives",
+#     topics = topic,
+#     text.cex = 5,     
+#     main = paste("[","Topic", topic, "Top words","]"),
+#     pch = 30, 
+#     cex.main = 5,
+#     cex.axis = 20
+#   )
+# }
+```
+
+## **Q33. What suggestions do you have for policymakers to more effectively engage your community in the policymaking process? How could they create opportunities for your community to influence the decisions that impact them? (N = 740)**
+
+```{r, echo = FALSE, results='hide'}
+# N = 740 (NA = 1, Blank = 3)
+sum(is.na(df$Q33))
+sum(df$Q33 == "", na.rm = TRUE)
+
+# 1. Ingest: Reading and processing text data
+processed_Q33 <- textProcessor(
+  documents = df$Q33[!is.na(df$Q33) & df$Q33 != ""], 
+  metadata = df[!is.na(df$Q33) & df$Q33 != "", ]
+)
+
+# 2. Prepare: Associating text with metadata
+prep_Q33 <- prepDocuments(processed_Q33$documents, 
+                      processed_Q33$vocab,
+                      processed_Q33$meta) 
+```
+
+> 1.  Ingest: Reading and processing text data
+> 2.  Prepare: Associating text with metadata
+> 3.  Estimate: Estimating the structural topic model
+> 4.  Metrics to evaluate STM model performance
+>     -   Held-out likelihood, semantic coherence, exclusivity, lowerbound: the higher, the better
+>     -   Residuals: the lower, the better
+>     -   **k=20** seems to be optimal that balances values of metrics evaluating the performance of the STM model (tested from 5 to 35 since we have more than 500 documents)
+> 5.  Understand: Interpreting the STM
+
+```{r, echo = FALSE, include=FALSE}
+# Held-out likelihood, semantic coherence, exclusivity, Lowerbound: the higher, the better
+# Residuals: the lower, the better
+# k=20 seems to be optimal that balances values of metrics evaluating the performance of the STM model
+
+# 3. Estimate: Estimating the structural topic model
+stm_Q33 <- stm(documents = prep_Q33$documents, 
+                 vocab = prep_Q33$vocab, 
+                 K = 20, 
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+                 data = prep_Q33$meta, 
+                 max.em.its = 75,
+                 init.type = "Spectral", seed=1234)
+
+# k_Q33 <- searchK(prep_Q33$documents, prep_Q33$vocab, K = c(5, 35), prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, data = prep_Q33$meta)
+```
+
+### Interpreting topics
+
+```{r, echo = FALSE}
+# 4. Evaluate: model selection and search
+## Model initialization for a fixed number of topics: use an initialization based on the method of moments, which is deterministic and globally consistent under reasonable conditions (init.type = "Spectral")
+# plot(k_Q33)
+
+## Interpret labelTopics
+labelTopics(stm_Q33)
+plot(stm_Q33, type = "summary", xlim = c(0, 0.3), labeltype = "frex", n = 5)
+
+# Topic proportions
+colMeans(stm_Q33$theta)
+
+# Wordcloud
+for (i in 1:5) {
+  cloud(stm_Q33, topic = i, scale = c(3, 1), max.words = 15)
+}
+
+# Documents highly associated with particular topics
+thoughts_Q33 <- list()
+
+for (topic in 1:20) {
+  thoughts_Q33[[topic]] <- findThoughts(
+    stm_Q33, 
+    texts = df$Q33[as.numeric(rownames(prep_Q33$meta))], 
+    n = 2, 
+    topics = topic
+  )$docs[[1]]
+  #print(thoughts_Q33[[topic]])
+}
+
+for (topic in 1:20) {
+  cat(sprintf("Topic %d:\n", topic))
+  print(thoughts_Q33[[topic]])
+  cat("\n")
+}
+
+# thought4 <- findThoughts(stm_Q33, texts = df$Q33[as.numeric(rownames(prep_Q33$meta))], n = 3, topics = 4)$docs[[1]]
+# thought5 <- findThoughts(stm_Q33, texts = df$Q33[as.numeric(rownames(prep_Q33$meta))], n = 3, topics = 5)$docs[[1]]
+# par(mfrow = c(1, 2), mar = c(0.5, 0.5, 1, 0.5))
+# plotQuote(thought4, width = 30, main = "Topic 4")
+# plotQuote(thought5, width = 30, main = "Topic 5")
+```
+
+### Topic prevalence: Understanding how different topics vary across specific groups or conditions and assessing the effect of covariates on the occurrence of topics
+
+> -   Demographic factors that have a statistically significant effect on topic prevalence: **age, gender, ethnicity, education level, and community** (all demographic factors except for income level)
+>
+> ```         
+> -   Topic 1
+>     * Gender
+>     - Being male significantly increases the prevalence of Topic 1 by 0.02 compared to females (p < 0.01)
+>     * Age
+>     - Being older significantly decreases the prevalence of Topic 1 by 0.04 compared to middle-aged individuals (p < 0.01)
+>     - Being younger significantly decreases the prevalence of Topic 1 by 0.02 compared to middle-aged individuals (p < 0.01)
+>     * Ethnicity
+>     - Black people significantly increases the prevalence of Topic 1 by 0.04 compared to Asian people (p < 0.01)
+>     - White people significantly increases the prevalence of Topic 1 by 0.03 compared to the reference ethnicity (p < 0.05)
+>     * Education level
+>     - Having high school to some college education significantly decreases the prevalence of Topic 1 by 0.03 compared to individuals with Advanced degrees (p < 0.01)
+>
+> -   Topic 2
+>     * Age
+>     - Being younger significantly increases the prevalence of Topic 2 by 0.02 compared to middle-aged individuals (p < 0.001)
+>     * Ethnicity
+>     - Identifying as White significantly decreases the prevalence of Topic 2 by 0.05 compared to Asians (p < 0.001)
+>     * Education level
+>     - Having high school to some college education significantly decreases the prevalence of Topic 2 by 0.02 compared to individuals with Advanced degrees (p < 0.01)
+>
+> -   Topic 3
+>     * Gender
+>     - Being non-binary/third gender significantly increases the prevalence of Topic 3 by 0.08 compared to Females (p < 0.001)
+>     * Age
+>     - Being older significantly increases the prevalence of Topic 3 by 0.04 compared to middle-aged individuals (p < 0.05)
+>     * Ethnicity
+>     - Identifying as Black significantly decreases the prevalence of Topic 3 by 0.03 compared to Asians (p < 0.05)
+>     - Identifying as Hispanic significantly increases the prevalence of Topic 3 by 0.04 compared to Asians (p < 0.05)
+>     - Identifying as Multi-racial significantly increases the prevalence of Topic 3 by 0.04 compared to Asians (p < 0.05)
+>
+> -   Topic 4
+>     * Gender
+>     - Being male significantly decreases the prevalence of Topic 4 by 0.02 compared to Females (p < 0.01)
+>     - Being non-binary/third gender significantly decreases the prevalence of Topic 4 by 0.05 compared to females (p < 0.05)
+>     * Ethnicity
+>     - Identifying as Black significantly decreases the prevalence of Topic 4 by 0.08 compared to Asians (p < 0.001)
+>     - Identifying as Hispanic significantly decreases the prevalence of Topic 4 by 0.08 compared to Asians (p < 0.001)
+>     - Identifying as Multiple Ethnicity/Other significantly decreases the prevalence of Topic 4 by 0.05 compared to Asians (p < 0.05)
+>     * Education level
+>     - Having a Bachelor's degree significantly increases the prevalence of Topic 4 by 0.03 compared to individuals with Advanced degrees (p < 0.01)
+>     - Having high school to some college education significantly increases the prevalence of Topic 4 by 0.09 compared to individuals with graduate degrees (p < 0.001)
+>     - Having less than high school education significantly increases the prevalence of Topic 4 by 0.1 compared to individuals with graduate degrees (p < 0.05)
+>     * Community
+>     - Living in non-disadvantaged areas significantly decreases the prevalence of Topic 4 by 0.02 compared to living in disadvantaged areas(p < 0.001)
+>
+> -   Topic 5
+>     * Gender
+>     - Being non-binary/third gender significantly decreases the prevalence of Topic 5 by 0.04 compared to females (p < 0.05)
+>     * Age
+>     - Being older significantly decreases the prevalence of Topic 5 by 0.03 compared to middle-aged individuals (p < 0.05)
+>     * Ethnicity
+>     - Identifying as Black significantly increases the prevalence of Topic 5 by 0.10 compared to Asians (p < 0.001)
+>     - Identifying as Hispanic significantly increases the prevalence of Topic 5 by 0.05 compared to Asians (p < 0.01)
+>     - Identifying as White significantly increases the prevalence of Topic 5 by 0.03 compared to Asians (p < 0.05)
+>     * Education level
+>     - Having high school to some college education significantly decreases the prevalence of Topic 5 by 0.03 compared to individuals with graduate degrees (p < 0.001)
+>     * Community
+>     - Living in non-disadvantaged areas significantly increases the prevalence of Topic 5 by 0.02 compared to living in disadvantaged areas(p < 0.001)
+> ```
+
+```{r, echo = FALSE}
+## Change the reference group of estimateEffect
+prep_Q33$meta$census <- as.factor(prep_Q33$meta$census)
+prep_Q33$meta$census <- relevel(prep_Q33$meta$census, ref = "Non-disadvantaged")
+prep_Q33$meta$eth_g <- as.factor(prep_Q33$meta$eth_g)
+prep_Q33$meta$eth_g <- relevel(prep_Q33$meta$eth_g, ref = "White")
+prep_Q33$meta$income_g <- as.factor(prep_Q33$meta$income_g)
+prep_Q33$meta$income_g <- relevel(prep_Q33$meta$income_g, ref = "High")
+
+set.seed(1234)
+effect_Q33 <- estimateEffect(1:20 ~ gender_g + age_g + eth_g + edu_g + income_g + census, stmobj = stm_Q33, metadata = prep_Q33$meta, uncertainty = "Global")
+#summary(effect_Q33)
+
+# Extract summary of effect estimates
+summary_Q33 <- summary(effect_Q33)
+
+# Create an empty data frame to store results
+Q33_summary <- data.frame()
+
+# Loop through topics to extract significant coefficients
+for (topic in 1:length(summary_Q33$tables)) {
+  topic_table <- summary_Q33$tables[[topic]]  # Get table for each topic
+  topic_name <- paste("Topic", topic)         # Topic name
+  
+  # Convert to a data frame and add row names as a new column
+  topic_table_df <- as.data.frame(topic_table)
+  topic_table_df$Variable <- rownames(topic_table)  # Add variable names
+  
+  # Filter rows with p-value < 0.05
+  significant <- topic_table_df %>%
+    filter(`Pr(>|t|)` < 0.05)
+  
+  # Add topic name to the results
+  if (nrow(significant) > 0) {
+    significant$Topic <- topic_name
+    Q33_summary <- bind_rows(Q33_summary, significant)
+  }
+}
+
+# Rename columns for clarity
+colnames(Q33_summary) <- c(
+  "Estimate", "Std.Error", "t-value", "P-value", "Variable", "Topic"
+)
+
+# Reorder columns
+Q33_summary <- Q33_summary %>%
+  select(Topic, Variable, Estimate, Std.Error, `t-value`, `P-value`)
+
+# Save it as csv
+write.csv(Q33_summary, "Q33_summary.csv", row.names = FALSE)
+
+# Summary (eth, income, community only)
+iv <- c("eth_gBlack", "eth_gAsian", "eth_gHispanic", "income_gLow", "income_gMiddle", "censusDisadvantaged")
+
+Q33_summary2 <- Q33_summary %>% filter(Variable %in% iv)
+
+write.csv(Q33_summary2, "Q33_summary_iv.csv", row.names = FALSE)
+
+## Interaction effects 
+set.seed(1234)
+effect_Q33_interaction <- estimateEffect(1:20 ~ gender_g + age_g + edu_g + income_g + eth_g + census + census:income_g, stmobj = stm_Q33, metadata = prep_Q33$meta, uncertainty = "Global")
+#summary(effect_Q33_interaction)
+
+# Extract summary of effect estimates
+summary_Q33_inter <- summary(effect_Q33_interaction)
+
+# Create an empty data frame to store results
+Q33_interaction <- data.frame()
+
+# Loop through topics to extract significant coefficients
+for (topic in 1:length(summary_Q33_inter$tables)) {
+  topic_table <- summary_Q33_inter$tables[[topic]]  # Get table for each topic
+  topic_name <- paste("Topic", topic)         # Topic name
+  
+  # Convert to a data frame and add row names as a new column
+  topic_table_df <- as.data.frame(topic_table)
+  topic_table_df$Variable <- rownames(topic_table)  # Add variable names
+  
+  # Filter rows with p-value < 0.05
+  significant <- topic_table_df %>%
+    filter(`Pr(>|t|)` < 0.05)
+  
+  # Add topic name to the results
+  if (nrow(significant) > 0) {
+    significant$Topic <- topic_name
+    Q33_interaction <- bind_rows(Q33_interaction, significant)
+  }
+}
+
+# Rename columns for clarity
+colnames(Q33_interaction) <- c(
+  "Estimate", "Std.Error", "t-value", "P-value", "Variable", "Topic"
+)
+
+# Reorder columns
+Q33_interaction <- Q33_interaction %>%
+  select(Topic, Variable, Estimate, Std.Error, `t-value`, `P-value`)
+
+# Save it as csv
+write.csv(Q33_interaction, "Q33_summary_interaction.csv", row.names = FALSE)
+
+# # Display statistically significant results only  
+# coeffs_Q33 <- lapply(summary(effect_Q33)$tables, as.data.frame)
+# filtered_Q33 <- lapply(coeffs_Q33, function(df) {
+#   df[df$`Pr(>|t|)` <= 0.05, ]  
+# })
+# 
+# lapply(seq_along(coeffs_Q33), function(i) {
+#   result <- coeffs_Q33[[i]][coeffs_Q33[[i]]$`Pr(>|t|)` <= 0.05, ]
+#   if (nrow(result) > 0) {
+#     title <- paste("Significant results for Topic", i)
+#     list(Title = title, Results = result)
+#   } else {
+#     list(Title = paste("No significant results for Topic", i), Results = NULL)
+#   }
+# })
+
+# Plot the effect of age on topic prevalence
+# plot(effect_Q33, covariate = "age_g", topics=1, main = "Effect of age")
+# plot(effect_Q33, covariate = "gender_g", topics = c(1,2), main = "Effect of gender")
+# plot(effect_Q33, covariate = "eth_g", topics = c(2,3,5), main = "Effect of ethnicity")
+# plot(effect_Q33, covariate = "edu_g", topics = c(1,2,3,4), main = "Effect of education level")
+```
+
+```{r}
+# stargazer(effect_Q32, effect_Q33, title="Model comparison", type="html", out = "lm2.html",
+#           dep.var.labels = c("Miles per gallon", "High MPG car"),
+#           covariate.labels=c("Displacement","Rear axle ratio","Four gears","Five gears", "Transmission(M=1)"),
+#                  omit.stat=c("LL","ser"),no.space=T)
+
+
+# Extract topic effects
+effect_summary <- summary(effect_Q33)
+
+# Convert the results into a tidy data frame
+tidy_effect <- data.frame(
+  Topic = rep(names(effect_summary$tables), each = nrow(effect_summary$tables[[1]])),
+  Covariate = unlist(lapply(effect_summary$tables, rownames)),
+  Estimate = unlist(lapply(effect_summary$tables, function(x) x[, "Estimate"])),
+  Std_Error = unlist(lapply(effect_summary$tables, function(x) x[, "Std. Error"])),
+  t_value = unlist(lapply(effect_summary$tables, function(x) x[, "t value"])),
+  p_value = unlist(lapply(effect_summary$tables, function(x) x[, "Pr(>|t|)"]))
+)
+
+# Add significance stars
+tidy_effect$Significance <- cut(
+  tidy_effect$p_value,
+  breaks = c(-Inf, 0.001, 0.01, 0.05, 0.1, Inf),
+  labels = c("***", "**", "*", ".", ""),
+  right = FALSE
+)
+
+# View the tidy data frame
+print(tidy_effect)
+
+```
+
+### Topical content: Explores how the words associated with a topic (topic content) are influenced by covariates (discuss whether to include it)
+
+```{r, echo = FALSE, results='hide', include=FALSE}
+## Ethnicity
+### Asian
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q33) & df$Q33 != "" & 
+                 (df$eth_g %in% c("Asian", "White"))
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q33[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# 3. Process text
+processed_Q33_A <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+# 4. Prepare documents and metadata for STM
+prep_Q33_A <- prepDocuments(processed_Q33_A$documents, 
+                            processed_Q33_A$vocab,
+                            processed_Q33_A$meta) 
+
+prep_Q33_A$meta$eth_g <- factor(prep_Q33_A$meta$eth_g, levels = c("Asian", "White"))
+
+# 6. Fit STM model
+stm_Q33_eth_A <- stm(
+  documents = prep_Q33_A$documents, 
+  vocab = prep_Q33_A$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q33_A$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+### Black
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q33) & df$Q33 != "" & 
+                 (df$eth_g %in% c("Black", "White"))  
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q33[filtered_rows]  
+metadata_filtered <- df[filtered_rows, ]     
+
+# 3. Process text
+processed_Q33_B <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered)
+
+# 4. Prepare documents and metadata for STM
+prep_Q33_B <- prepDocuments(processed_Q33_B$documents, 
+                            processed_Q33_B$vocab,
+                            processed_Q33_B$meta) 
+
+prep_Q33_B$meta$eth_g <- factor(prep_Q33_B$meta$eth_g, levels = c("Black", "White"))
+
+# 6. Fit STM model
+stm_Q33_eth_B <- stm(
+  documents = prep_Q33_B$documents, 
+  vocab = prep_Q33_B$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q33_B$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+### Hispanic
+# 1. Fix the filtering condition
+filtered_rows <- !is.na(df$Q33) & df$Q33 != "" & 
+                 (df$eth_g %in% c("Hispanic", "White")) 
+
+# 2. Filter documents and metadata
+documents_filtered <- df$Q33[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# 3. Process text
+processed_Q33_H <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+# 4. Prepare documents and metadata for STM
+prep_Q33_H <- prepDocuments(processed_Q33_H$documents, 
+                            processed_Q33_H$vocab,
+                            processed_Q33_H$meta) 
+
+prep_Q33_H$meta$eth_g <- factor(prep_Q33_H$meta$eth_g, levels = c("Hispanic", "White"))
+
+# 6. Fit STM model
+stm_Q33_eth_H <- stm(
+  documents = prep_Q33_H$documents, 
+  vocab = prep_Q33_H$vocab, 
+  K = 20, 
+  prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census,
+  content = ~ eth_g,
+  data = prep_Q33_H$meta, 
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 1234
+)
+
+# Ethnicity plot
+png("Q33_plot_eth.png", width = 5000, height = 4000, res = 300)
+par(mfrow = c(4, 4), mar = c(1, 1, 1, 1))
+
+topics <- c(10,11) 
+for (topic in topics) {
+  plot(
+    stm_Q33_eth_A,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1)}
+
+topics <- c(2,4,5,10,11,14,15,16,19,20) 
+for (topic in topics) {
+  plot(
+    stm_Q33_eth_B,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1)}
+
+topics <- c(13,20) 
+for (topic in topics) {
+  plot(
+    stm_Q33_eth_H,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1)}
+dev.off()
+
+## Income & census (interaction effects)
+# Low income
+filtered_rows <- !is.na(df$Q33) & df$Q33 != "" & (df$income_g == "Low" | df$income_g == "High")
+
+documents_filtered <- df$Q33[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# Run textProcessor with aligned documents and metadata
+processed_Q33_l <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+prep_Q33_l <- prepDocuments(processed_Q33_l$documents, 
+                      processed_Q33_l$vocab,
+                      processed_Q33_l$meta) 
+
+prep_Q33_l$meta$income_g <- factor(prep_Q33_l$meta$income_g, levels = c("Low","High"))
+
+stm_Q33_income_low <- stm(documents = prep_Q33_l$documents, 
+                 vocab = prep_Q33_l$vocab, 
+                 K = 20, 
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, content = ~ income_g,
+                 data = prep_Q33_l$meta, 
+                 max.em.its = 75,
+                 init.type = "Spectral", seed=1234)
+
+# Middle income_Filter documents and metadata
+filtered_rows <- !is.na(df$Q33) & df$Q33 != "" & (df$income_g == "Middle" | df$income_g == "High")
+
+documents_filtered <- df$Q33[filtered_rows]  # Filtered documents
+metadata_filtered <- df[filtered_rows, ]     # Filtered metadata
+
+# Run textProcessor with aligned documents and metadata
+processed_Q33_m <- textProcessor(
+  documents = documents_filtered,
+  metadata = metadata_filtered
+)
+
+prep_Q33_m <- prepDocuments(processed_Q33_m$documents, 
+                      processed_Q33_m$vocab,
+                      processed_Q33_m$meta) 
+
+prep_Q33_m$meta$income_g <- factor(prep_Q33_m$meta$income_g, levels = c("Middle","High"))
+
+stm_Q33_income_middle <- stm(documents = prep_Q33_m$documents, 
+                 vocab = prep_Q33_m$vocab, 
+                 K = 20, 
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, content = ~ income_g,
+                 data = prep_Q33_m$meta, 
+                 max.em.its = 75,
+                 init.type = "Spectral", seed=1234)
+
+# Census
+prep_Q33$meta$census <- factor(prep_Q33$meta$census, levels = c("Disadvantaged","Non-disadvantaged"))
+
+stm_Q33_census <- stm(documents = prep_Q33$documents, 
+                 vocab = prep_Q33$vocab, 
+                 K = 20, 
+                 prevalence = ~ gender_g + age_g + eth_g + edu_g + income_g + census, content = ~ census,
+                 data = prep_Q33$meta, 
+                 max.em.its = 75,
+                 init.type = "Spectral", seed=1234)
+
+# Income & census plot
+png("Q33_plot_income_census.png", width = 5000, height = 2500, res = 300)
+par(mfrow = c(1, 3), mar = c(2, 2, 2, 2))
+plot(
+    stm_Q33_census,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1)
+plot(
+    stm_Q33_income_low,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1)
+plot(
+    stm_Q33_income_middle,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1)
+dev.off()
+
+# For paper
+png("Q33_plot_combined_eth.png", width = 5000, height = 2800, res = 300)
+par(mfrow = c(2, 4), mar = c(0.8, 0.8, 0.8, 0.8))
+
+topics <- c(2, 11, 16, 15, 13, 14) 
+for (topic in topics) {
+  plot(
+    stm_Q33_eth_B,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1)}
+
+plot(
+    stm_Q33_eth_A ,
+    type = "perspectives",
+    topics = 10,
+    text.cex = 1)
+
+plot(
+    stm_Q33_eth_H,
+    type = "perspectives",
+    topics = 13,
+    text.cex = 1)
+
+png("Q33_plot_combined_income_census.png", width = 4800, height = 2800, res = 300)
+par(mfrow = c(2, 2), mar = c(0.8, 0.8, 0.8, 0.8))
+plot(
+    stm_Q33_income_low,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1.3)
+plot(
+    stm_Q33_income_middle,
+    type = "perspectives",
+    topics = 12,
+    text.cex = 1)
+
+topics <- c(6, 9) 
+for (topic in topics) {
+  plot(
+    stm_Q33_census,
+    type = "perspectives",
+    topics = topic,
+    text.cex = 1.3)}
+dev.off()
+```
