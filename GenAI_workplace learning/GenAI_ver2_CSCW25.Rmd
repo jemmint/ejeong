@@ -477,7 +477,7 @@ stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Cust
 stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Safety (technical robustness)","Safety")
 stats_factor$factors <- replace(stats_factor$factors,stats_factor$factors=="Autonomy (human agency)","Autonomy")
 
-n_distinct(stats_factor$ID)
+total_factor <- n_distinct(stats_factor$ID)
 
 df_factor <- stats_factor %>%
   group_by(factors) %>%
@@ -509,11 +509,14 @@ b_factor
 #         axis.text.x = element_text(hjust = 1))+
 #   coord_flip()
 
-b_factor2 <- ggplot(df_factor, aes(x = reorder(factors, percent), y = percent, fill = factors)) +
+df_factor <- df_factor %>% mutate(Label = paste0(freq, " ", "(", percent, "%)")) 
+
+b_factor2 <- ggplot(df_factor, aes(x = reorder(factors, freq), y = freq, fill = factors)) +
   geom_bar(stat = "identity", fill="darkblue") +
-  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface = "bold") +
+  ylim(0,130) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 5, fontface = "bold") +
   labs(x = "", y = "", title = "") +
-  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
   theme_minimal() +
   theme(
     text = element_text(size = 15, face = "bold"),  
@@ -522,7 +525,7 @@ b_factor2 <- ggplot(df_factor, aes(x = reorder(factors, percent), y = percent, f
     axis.text.y = element_text(size = 15, face = "bold")) +
   coord_flip()
 b_factor2
-ggsave(b_factor2, filename="f2.jpg", device="jpg", width = 12, height = 6, dpi = 1200)
+ggsave(b_factor2, filename="value_rev.jpg", device="jpg", width = 12, height = 6, dpi = 1200)
 ```
 
 ## Chi-squre test
