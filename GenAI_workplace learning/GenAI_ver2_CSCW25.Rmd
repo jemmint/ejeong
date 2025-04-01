@@ -300,6 +300,23 @@ b_method <- ggplot(df_method, aes(x = method, y = percent, fill = method)) +
   theme(legend.position = "none",
         axis.text.x = element_text(angle = 45, hjust = 1))
 b_method
+
+df_method <- df_method %>% mutate(Label = paste0(freq, " ", "(", percent, "%)")) 
+
+b_method2 <- ggplot(df_method, aes(x = reorder(method, freq), y = freq, fill = method)) +
+  geom_bar(stat = "identity", fill="darkblue") +
+  ylim(0,150) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 5, fontface = "bold") +  
+  labs(x = "", y = "", title = "") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 15, face = "bold"),  
+    legend.position = "none",
+    axis.text.x = element_text(size = 15, face = "bold"),  
+    axis.text.y = element_text(size = 15, face = "bold")) +
+  coord_flip()
+b_method2
+ggsave(b_method2, filename="method_rev.jpg", device="jpg", width = 11, height = 6, dpi = 1200)
 ```
 
   * Sources for workplace learning
@@ -344,11 +361,14 @@ b_source
 #         axis.text.x = element_text(hjust = 1))+
 #  coord_flip()
 
-b_source2 <- ggplot(df_source, aes(x = reorder(source,percent), y = percent, fill = source)) +
+df_source <- df_source %>% mutate(Label = paste0(freq, " ", "(", percent, "%)")) 
+
+b_source2 <- ggplot(df_source, aes(x = reorder(source,freq), y = freq, fill = source)) +
   geom_bar(stat = "identity", fill="darkblue") +
-  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface="bold") +
+  ylim(0,200) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 5, fontface="bold") +
   labs(x = "", y = "", title = "") +
-  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
+  #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
   theme_minimal() +
   theme_minimal() +
   theme(
@@ -358,7 +378,7 @@ b_source2 <- ggplot(df_source, aes(x = reorder(source,percent), y = percent, fil
     axis.text.y = element_text(size = 15, face = "bold")) +
   coord_flip()
 b_source2
-ggsave(b_source2, filename="f4.jpg", device="jpg", width = 13, height = 6, dpi = 1200)
+ggsave(b_source2, filename="source_rev.jpg", device="jpg", width = 13, height = 6, dpi = 1200)
 ```
 
   * Impacts of workplace learning
@@ -401,12 +421,14 @@ b_impact
 #   coord_flip()  # This flips the axes
 # b_impact2
 
-b_impact2 <- ggplot(df_impact, aes(x = reorder(impact, percent), y = percent, fill = impact)) +
+df_impact <- df_impact %>% mutate(Label = paste0(freq, " ", "(", percent, "%)")) 
+
+b_impact2 <- ggplot(df_impact, aes(x = reorder(impact, freq), y = freq, fill = impact)) +
   geom_bar(stat = "identity", fill="darkblue") +
-  geom_text(aes(label = paste0(percent, "%")), hjust = -0.1, size = 5, fontface = "bold") +  
+  ylim(0,250) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 5, fontface = "bold") +  
   labs(x = "", y = "", title = "") +
-  #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1)) +
-  scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1), limits = c(0, 85)) +
+  #scale_y_continuous(labels = scales::percent_format(scale = 1, accuracy = 1), limits = c(0, 85)) +
   theme_minimal() +
   theme(
     text = element_text(size = 15, face = "bold"),  
@@ -415,7 +437,7 @@ b_impact2 <- ggplot(df_impact, aes(x = reorder(impact, percent), y = percent, fi
     axis.text.y = element_text(size = 15, face = "bold")) +
   coord_flip()
 b_impact2
-ggsave(b_impact2, filename="f1.jpg", device="jpg", width = 11, height = 6, dpi = 1200)
+ggsave(b_impact2, filename="impact_rev.jpg", device="jpg", width = 11, height = 6, dpi = 1200)
 #ggsave("figure_dpi1000.png", dpi=1000, dev='png', height=4.5, width=8.5, units="in")
 ```
   
