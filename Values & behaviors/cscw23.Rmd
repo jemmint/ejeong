@@ -1,0 +1,1024 @@
+---
+title: "CSCW-Modeling"
+author: "Corey Jackson"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+library(readr)
+library(dplyr)
+library(reshape2)
+library(ltm)
+library(psych)
+library(ggplot2)
+library(ggsci)
+library(data.table)
+library(DT)
+library(corrplot)
+library(lme4)
+library(r2glmm) #https://rdrr.io/cran/r2glmm/man/r2beta.html 
+library(psych) # describe.by(user_work_summary, user_work_summary$Group)
+library(MuMIn)
+library(tidyselect)
+library(lmerTest)
+library(Hmisc)
+library(stargazer)
+library(report)
+library(modelsummary)
+#library(rcompanion)
+#library(performance)
+library(gridExtra)
+library(caret)
+library(sjPlot)
+library(performance)
+library(ROSE)
+library(tidyr)
+
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+
+logit2prob <- function(logit){
+  odds <- exp(logit)
+  prob <- odds / (1 + odds)
+  return(prob)
+}
+
+
+stargazer2 <- function(model, odd.ratio = F, ...) {
+  if(!("list" %in% class(model))) model <- list(model)
+  
+  if (odd.ratio) {
+    coefOR2 <- lapply(model, function(x) exp(coef(x)))
+    seOR2 <- lapply(model, function(x) exp(coef(x)) * summary(x)$coef[, 2])
+    p2 <- lapply(model, function(x) summary(x)$coefficients[, 4])
+    stargazer(model, coef = coefOR2, se = seOR2, p = p2, ...)
+    
+  } else {
+    stargazer(model, ...)
+  }
+}
+
+### DATA IMPORT AND CLEANING
+#setwd("/Volumes/cbjackson2/usersurvey/_CSCW23/")
+setwd("Z:/usersurvey/_CSCW23") #PLEASE KEEP AND UNCOMMENT WHEN YOU RUN
+
+user_project_data <- read_csv("Z:/usersurvey/_CSCW23/final_44592_PU.csv") # KEEP NAME AS IS, YOU SHOULD UNCOMMENT LINE 50 TO IMPORT
+
+user_project_data <- user_project_data[c(1:16,1,17:95)]
+user_project_data <- user_project_data[,-c(1,16,18,49,83,82,69)]
+user_project_data <- user_project_data[,c(2,59,1,3,4:89)] # Sense ordering
+
+# Add categorical variable for doing activity
+user_project_data <- user_project_data %>% 
+  rename("user_id" = "user_id_x")
+
+###### What about NAs (should these be the same as 0). Consider impact to models. Perhaps two models - one for doing (binary) and the other for quantity.
+
+# Comment in project
+user_project_data$comment_binary <- ifelse(user_project_data$project_comment>=1,1,0)
+user_project_data$other_cs <- ifelse(user_project_data$participate_other_cs_choice=="Yes",1,0)
+user_project_data$role_binary <- ifelse(user_project_data$roles> 1,1,0)
+user_project_data$replies_binary <- ifelse(user_project_data$project_replies >=1,1,0)
+user_project_data$links_binary <- ifelse(user_project_data$project_links>=1,1,0)
+user_project_data$tags_binary <- ifelse(user_project_data$project_tags>=1,1,0)
+
+user_project_data <- user_project_data[which(user_project_data$discipline != "Unofficial"),] #2553 removed
+
+#changing column names
+names(user_project_data)
+user_project_data <- rename(user_project_data, c("achievement"="achievemen_tscore", 
+                                                 "benevolence"="benevolenc_escore",
+                                                 "conformity"="conformit_yscore",
+                                                 "hedonism"="hedonis_mscore",
+                                                 "power"="powe_rscore",
+                                                 "security"="securit_yscore",
+                                                 "selfdirection"="self_directio_nscore",
+                                                 "stimulation"="stimulatio_nscore",
+                                                 "tradition"="traditio_nscore",
+                                                 "universalism"="universalis_mscore",
+                                                 
+                                                 "achievementFinal"="achievemen_tfinal_score",
+                                                 "benevolenceFinal"="benevolenc_efinal_score",
+                                                 "conformityFinal"="conformit_yfinal_score",
+                                                 "hedonismFinal"="hedonis_mfinal_score",
+                                                 "powerFinal"="powe_rfinal_score",
+                                                 "securityFinal"="securit_yfinal_score",
+                                                 "selfdirectionFinal"="self_directio_nfinal_score",
+                                                 "stimulationFinal"="stimulatio_nfinal_score",
+                                                 "traditionFinal"="traditio_nfinal_score",
+                                                 "universalismFinal"="universalis_mfinal_score",
+                                                 
+                                                 "otcscore"="openness_to_changescore",
+                                                 "otcfinal_score"="openness_to_changefinal_score",
+                                                 "self_transfinal"="self_transcendencefinal_score",
+                                                 "self_enhancefinal"="self_enhancementfinal_score",
+                                                 
+                                                 "otcmrat"="openness_to_changemrat"
+                                                 ))
+
+
+## Summarize at the user level
+user_data <- user_project_data %>% 
+  group_by(user_login,user_id) %>%
+  summarise(join_date = min(project_start),
+            recent_date = max(project_end),
+            t_days =  difftime(recent_date,join_date, units="days"),
+            average_days = round(mean(project_tenure_days),digits=2),
+            t_projects = length(unique(project_name)),
+            t_classifications = sum(project_classifications,na.rm = TRUE),
+            t_sessions = sum(project_sessions,na.rm = TRUE),
+            average_sessions = round(mean(project_sessions),digits=2),
+            t_sessions = sum(project_sessions[which(project_sessions>1)],na.rm = TRUE),
+            t_roles = sum(collaborator+expert+moderator+owner+scientist+tester+translator,na.rm = TRUE),
+            t_project_w_roles = length(project_name[which(role_binary==1)]),
+            t_moderator = sum(moderator,na.rm = TRUE),
+            t_project_w_levels = length(project_name[which(level=="Y")]), 
+            t_tester = sum(tester,na.rm = TRUE),
+            t_comments = sum(project_comment,na.rm = TRUE),
+            t_questions = sum(project_questions,na.rm = TRUE),
+            t_replies = sum(project_replies,na.rm = TRUE),
+            t_links = sum(project_links,na.rm = TRUE),
+            t_tags = sum(project_tags,na.rm = TRUE),
+            t_wordlength = sum(project_word_length,na.rm = TRUE),
+            t_project_w_comment = length(project_name[which(comment_binary==1)]),
+            t_project_w_questions = length(project_name[which(project_questions>=1)]),
+            t_project_w_replies = length(project_name[which(project_replies>=1)]),
+            t_project_w_links = length(project_name[which(project_links>=1)]),
+            t_project_w_tags = length(project_name[which(project_tags>=1)]),
+            t_task_type = length(unique(task_type, na.rm=TRUE)),
+            t_discipline = length(unique(discipline, na.rm=TRUE))
+            
+  )
+
+user_data$links_binary <- ifelse(user_data$t_links >= 1,1,0)
+user_data$tags_binary <- ifelse(user_data$t_tags >= 1,1,0)
+user_data$moderator_binary <- ifelse(user_data$t_moderator >= 1,1,0)
+user_data$comment_binary <- ifelse(user_data$t_project_w_comment >= 1,1,0)
+user_data$role_binary <- ifelse(user_data$t_roles >= 1,1,0)
+
+#merge survey data
+pvqscores <- unique(user_project_data[c(1,17:26,37:46,48:51,56:59)])
+
+#generate user data (single observation)
+user_data <- merge(user_data,pvqscores, by = "user_login",all.x = TRUE)
+remove(pvqscores)
+
+# Export data for correlations
+user_data2 <- user_data[,c(5,7:9,16,17,19,20,27:28,58:61)] # remove roles/replies
+user_data2[,c(1:10)] <- lapply(user_data2[,c(1:10)], function(x) c(scale(x)))
+ user_data2 <- rename(user_data2, c(
+   "Conservation"="conservationfinal_score",
+   "Openness to Change"="otcfinal_score",
+   "Self-Enhancement "="self_enhancefinal",
+   "Self-Transcendence."="self_transfinal",
+   "Tenure" = "t_days",
+   "Projects"="t_projects",
+   "Class."= "t_classifications",
+   "Sessions" ="t_sessions", 
+   "Comments"="t_comments", 
+   "Questions" = "t_questions",
+   "Hyperlink" = "t_links" ,
+   "Tags"= "t_tags",
+   "Tasks" = "t_task_type",
+   "Disciplines" = "t_discipline"
+   ))
+ 
+ 
+user_data3 <- user_data[,c(5,7:9,16,17,19,20,27:28,34:43)] # remove roles/replies
+user_data3[,c(1:10)] <- lapply(user_data2[,c(1:10)], function(x) c(scale(x)))
+ user_data3 <- rename(user_data3, c(
+   "Tenure" = "t_days",
+   "Projects"="t_projects",
+   "Class."= "t_classifications",
+   "Sessions" ="t_sessions", 
+   "Comments"="t_comments", 
+   "Questions" = "t_questions",
+   "Hyperlink" = "t_links" ,
+   "Tags"= "t_tags",
+   "Tasks" = "t_task_type",
+   "Disciplines" = "t_discipline"
+   
+   ))
+
+
+  #  "Achievement"="achievement",
+  # "Benevolence"="benevolence",
+  # "Conformity"="conformity",
+  # "Hedonism"="hedonism",
+  # "Power"="power",
+  # "Security"="security",
+  # "Selfdirection"="selfdirection",
+  # "Stimulation"="stimulation",
+  # "Tradition"="tradition",
+  # "Universalism"="universalism"
+
+# user_data2 <- rename(user_data2, c(
+#   "1"="conservationfinal_score",
+#   "2"="otcfinal_score",
+#   "3"="self_enhancefinal",
+#   "4"="self_transfinal",
+#   "5" = "t_days",
+#   "6"="t_projects",
+#   "7"= "t_classifications",
+#   "8" ="t_sessions", 
+#   "9"="t_comments", 
+#   "10" = "t_questions",
+#   "11" = "t_links" ,
+#   "12"= "t_tags",
+#   "13" = "t_task_type",
+#   "14" = "t_discipline"
+#   ))
+
+```
+
+
+### Demographic
+```{r, include=FALSE, warning=FALSE, cache=TRUE}
+library(gtsummary)
+
+demographics_population <- user_project_data %>% 
+  distinct(user_login,user_id,Gender = gender_select,Age = age,Ethnicity_Select = ethnicity_select,country,
+           school_highest_edu,employment_select,income,member_length,account_volunteer,
+           participate_other_cs_choice) 
+ demographics_population <- data.frame(demographics_population)
+
+
+ 
+# Recode 
+ 
+ 
+ ### ETH 
+single_eth <- c("White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)","Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)","Black (A person having origins in any of the black racial groups of Africa.)","Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)","Another race - Please specify","Prefer not to answer")
+
+demographics_population$single_eth <- 
+  ifelse(!demographics_population$Ethnicity_Select %in% single_eth,"Multi-racial",
+         paste0(demographics_population$Ethnicity_Select))
+
+
+demographics_population$single_eth <- dplyr::recode(demographics_population$single_eth, `White (A person having origins in any of the original peoples of Europe, the Middle East, or North Africa.)` = "White",`Asian (A person having origins in any of the original peoples of the Far East, Southeast Asia, or the Indian subcontinent)` =  "Asian", `Black (A person having origins in any of the black racial groups of Africa.)`= "Black", `Hispanic/Latino/Spanish origin (A person of Cuban, Mexican, Puerto Rican, South or Central American, or other Spanish culture or origin, regardless of race)` ="Hispanic", `Another race - Please specify` = "Other", `Prefer not to answer`="No Response")
+ 
+
+demographics_population$single_eth <- factor(demographics_population$single_eth, levels=c('Asian', 'Black', 'Hispanic', 'Multi-racial','White', 'Other',"No Response"))
+
+### Gender
+demographics_population$Gender <- dplyr::recode(demographics_population$Gender, 
+                              `Female (including transgender women)` = "Female", 
+                              `Male (including transgender men)` = "Male",
+                              `Prefer to self describe as ____________ (non-binary, gender-fluid, agender, please specify)` = "Non-binary",
+                              `Prefer not to answer` = "No Response"
+                              )
+
+demographics_population$Gender <- factor(demographics_population$Gender, levels=c('Female', 'Male', 'Non-binary', 'No Response'))
+
+### AGE 
+ demographics_population <- demographics_population %>% 
+  mutate(AgeGroup = case_when(
+  Age > 64 ~ 'Above 64',                                           
+  Age >= 55  & Age <= 64 ~ '55-64',
+  Age >= 45  & Age <= 54 ~ '45-54',
+  Age >= 35  & Age <= 44 ~ '35-44',
+  Age >= 25  & Age <= 34 ~ '25-34',
+  Age >= 18  & Age <= 24 ~ '18-24')) # end function
+ 
+# Schooling
+ demographics_population$Education <- dplyr::recode(demographics_population$school_highest_edu, 
+                              `Short-cycle tertiary education, e.g. vocational program` = "Vocational", 
+                              `Post-secondary non-tertiary education` = "Vocational",
+                              `Lower secondary education` = "< Bachelors",
+                              `Primary education` = "< Bachelors",
+                              `Upper secondary education` = "< Bachelors",
+                              `Early childhood Education` = "< Bachelors",
+                              `Bachelor's or equivalent` = "Bachelor's",
+                              `Master's or equivalent` = "Master's",
+                              `Doctoral or equivalent` = "Doctorate",
+                              `Prefer not to answer` = "No Response"
+                              )
+ 
+ demographics_population$Education <- factor(demographics_population$Education, levels=c('< Bachelors', 'Bachelor\'s','Vocational',
+                                                                                   'Master\'s','Doctorate','No Response'))
+ 
+ 
+ demographics_population <- demographics_population %>% 
+  mutate(Income=ifelse(income %in% c("Less than $1,000","$1,000 to $1,999","$2,000 to $2,999"), "Low",
+                         ifelse(income %in% c("$3,000 to $3,999","$4,000 to $4,999"),"Middle",
+                                ifelse(income %in% c("$5,000 or more"),"High", NA))))
+
+  demographics_population$Income <- factor(demographics_population$Income, levels=c('Low','Middle','High'))
+
+demographic_table <-  demographics_population %>% 
+   select(c(3,14,13,15,16)) %>% 
+   tbl_summary(missing = "no",label = list(single_eth = "Race/Ethnicity",AgeGroup = "Age Group")) %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+gender_table <-  demographics_population %>% 
+   select(c(3)) %>% 
+   tbl_summary(missing = "no") %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+age_table <-  demographics_population %>% 
+   select(c(14)) %>% 
+   tbl_summary(missing = "no",label = list(AgeGroup = "Age Group")) %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+eth_table <-  demographics_population %>% 
+   select(c(13)) %>% 
+   tbl_summary(missing = "no",label = list(single_eth = "Race/Ethnicity")) %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+edu_table <-  demographics_population %>% 
+   select(c(15)) %>% 
+   tbl_summary(missing = "no") %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+income_table <-  demographics_population %>% 
+   select(c(16)) %>% 
+   tbl_summary(missing = "no") %>%
+modify_header(label ~ "**Variable**")  %>%
+bold_labels()
+
+#gt::gtsave(as_gt(income_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "income_table.png"))
+#gt::gtsave(as_gt(edu_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "edu_table.png"))
+#gt::gtsave(as_gt(eth_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "eth_table.png"))
+#gt::gtsave(as_gt(age_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "age_table.png"))
+#gt::gtsave(as_gt(gender_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "gender_table.png"))
+#gt::gtsave(as_gt(demographic_table), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "demographic_table.png"))
+
+
+```
+
+```{r}
+demographic_table
+
+gender_table
+
+age_table
+
+eth_table
+
+edu_table
+
+income_table
+```
+
+### PVQ Scores
+```{r, include=FALSE, warning=FALSE, cache=TRUE}
+pvq.scores <- user_project_data %>%
+  dplyr::select(c(1,17:26)) %>% distinct()
+
+pvq.scores <- rename(pvq.scores, c(
+  "Achievement"="achievement",
+  "Benevolence"="benevolence",
+  "Conformity"="conformity",
+  "Hedonism"="hedonism",
+  "Power"="power",
+  "Security"="security",
+  "Selfdirection"="selfdirection",
+  "Stimulation"="stimulation",
+  "Tradition"="tradition",
+  "Universalism"="universalism"))
+
+pvq.scores.m <- melt(pvq.scores, id.vars = "user_login") 
+
+## VIZ
+pvq.values.viz <- ggplot(pvq.scores.m, 
+                         aes(x = reorder(factor(variable), value), y=value)) + 
+  geom_violin(trim=FALSE) + 
+  stat_summary(fun = "mean",
+               geom = "point",
+               color = "red") + 
+  geom_boxplot(width=0.1) +
+  coord_flip() + 
+  theme_minimal() + labs(x="Basic Value",y="Mean Value Score") +  
+  theme(legend.position="none",
+        legend.text = element_text(size=7),
+        legend.key.size = unit(.5,"line"),
+        axis.text = element_text(size = 12,face="bold"),
+        axis.title = element_text(size = 10)) +       
+  scale_fill_aaas()  + theme(complete = F) 
+
+
+hopvq.scores <- user_project_data %>%
+  dplyr::select(c(1,48:51)) %>% distinct()
+
+hopvq.scores <- rename(hopvq.scores, c(
+  "Conservation"="conservationscore",
+  "Openess-to-Change"="otcscore",
+  "Self-Enhancement"="self_enhancementscore",
+  "Self-Transcendence"="self_transcendencescore"))
+
+hopvq.scores.m <- melt(hopvq.scores, id.vars = "user_login") 
+
+## VIZ
+hopvq.scores.viz <- ggplot(hopvq.scores.m, 
+                         aes(x = reorder(factor(variable), value), y=value)) + 
+  geom_violin(trim=FALSE)  + 
+  stat_summary(fun = "mean",
+               geom = "point",
+               color = "red") + 
+    geom_boxplot(width=0.1) +
+  coord_flip() + 
+  theme_minimal() + labs(x="Higer Level Category",y="Mean Value Score") +  
+  theme(legend.position="none",
+        legend.text = element_text(size=7),
+        legend.key.size = unit(.5,"line"),
+        axis.text = element_text(size = 12,face="bold"),
+        axis.title = element_text(size = 10)) +       
+  scale_fill_aaas()  + theme(complete = F) 
+
+pdf("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/pvq.pdf", width=11, height=5)
+grid.arrange(hopvq.scores.viz,pvq.values.viz, ncol=2)
+dev.off()
+
+ggsave("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/pvq.png",width=15, height=4,
+grid.arrange(hopvq.scores.viz,pvq.values.viz, ncol=2) )
+dev.off()
+
+
+tab_4 <- hopvq.scores[,c(2:5)]  %>% 
+  tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})"))
+
+tab_10 <- pvq.scores[,c(2:11)]  %>% 
+   tbl_summary(statistic = list(all_continuous() ~ "{mean} ({sd})"))
+
+
+#gt::gtsave(as_gt(tab_4), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "ho_values_table.png"))
+#gt::gtsave(as_gt(tab_10), file = file.path("~/Library/CloudStorage/Box-Box/_research/zoo_survey[collab]/cscw2023/", "lo_values.png"))
+```
+
+```{r pvq-report}
+hopvq.scores.viz
+```
+
+```{r}
+tab_4
+```
+
+
+```{r pvq-report2}
+pvq.values.viz
+```
+```{r}
+
+tab_10
+```
+
+# Values and Activities
+```{r}
+
+
+
+```
+
+
+# Correlations
+```{r correlation-report}
+
+user_data2 %>%
+  select(-Questions) %>%
+tab_corr(
+  #user_data2,
+  #na.deletion = c("listwise", "pairwise"),
+  corr.method = c("spearman"),
+  #title = NULL,
+  var.labels = NULL,
+  wrap.labels = 40,
+  show.p = TRUE,
+  p.numeric = FALSE,
+  fade.ns = TRUE,
+  val.rm = NULL,
+  digits = 2,
+  triangle = "lower",
+  string.diag = NULL,
+  #CSS = NULL,
+  #encoding = NULL,
+  file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/corr.html",
+  #use.viewer = TRUE,
+  remove.spaces = TRUE
+)
+
+cormat <- round(cor(user_data2, method = "spearman"),2)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+  
+  # Melt the correlation matrix
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Heatmap
+ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 90, vjust = 1,size = 10, hjust = 1),
+      axis.title = element_blank())+
+ coord_fixed()
+
+ggheatmap <- ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 2.25) +
+theme(
+  axis.text.x = element_text(angle = 90, vjust = 1,size = 10, hjust = 1),
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+
+pdf("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/correlation.pdf", width=10, height=5)
+ggheatmap
+dev.off()
+
+# png("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statemet/correlation.png", width=11, height=5)
+# ggheatmap
+# dev.off()
+
+
+
+# Rename user_data3
+user_data3 <- user_data3 %>% 
+  rename( "Achievement"="achievement",
+  "Benevolence"="benevolence",
+  "Conformity"="conformity",
+  "Hedonism"="hedonism",
+  "Power"="power",
+  "Security"="security",
+  "Self-direction"="selfdirection",
+  "Stimulation"="stimulation",
+  "Tradition"="tradition",
+  "Universalism"="universalism")
+
+# ALL SCORES
+
+user_data3 %>%
+  select(-Questions) %>%
+tab_corr(
+  #user_data3,
+  #na.deletion = c("listwise", "pairwise"),
+  corr.method = c("spearman"),
+  #title = NULL,
+  var.labels = NULL,
+  wrap.labels = 40,
+  show.p = TRUE,
+  p.numeric = FALSE,
+  fade.ns = TRUE,
+  val.rm = NULL,
+  digits = 2,
+  triangle = "lower",
+  string.diag = NULL,
+  #CSS = NULL,
+  #encoding = NULL,
+  file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/corr_10.html",
+  #use.viewer = TRUE,
+  remove.spaces = TRUE
+)
+
+user_data3$Tenure <- as.numeric(user_data3$Tenure)
+
+cormat_10 <- round(cor(user_data3, method = "spearman"),2)
+melted_cormat_10 <- melt(cormat_10)
+
+  # Melt the correlation matrix
+upper_tri_10 <- get_upper_tri(cormat_10)
+melted_cormat_10 <- melt(upper_tri_10, na.rm = TRUE)
+# Heatmap
+ggheatmap_10 <- ggplot(data = melted_cormat_10, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 90, vjust = 1,size = 10, hjust = 1),
+      axis.title = element_blank())+
+ coord_fixed()
+
+ggheatmap_10 <- ggheatmap_10 + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 2) +
+theme(
+  axis.text.x = element_text(angle = 90, vjust = 1,size = 10, hjust = 1),
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+
+pdf("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/correlation_10.pdf", width=11, height=5)
+ggheatmap_10
+dev.off()
+
+# png("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/correlation_10.png", width=11, height=5)
+# ggheatmap_10
+# dev.off()
+
+
+
+
+pdf("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/corr-all.pdf", width=11, height=5)
+grid.arrange(ggheatmap,ggheatmap_10, ncol=2)
+dev.off()
+
+ggsave("C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/corr-all.png",width=15, height=4,
+grid.arrange(ggheatmap,ggheatmap_10, ncol=2) )
+dev.off()
+```
+
+
+# Regression Models 
+
+From Schwartz - "Enter uncentered values as predictors in the regression" 
+
+```{r regression-h1, include=FALSE, warning=FALSE}
+# https://vasishth.github.io/Freq_CogSci/ 
+## Disciplines
+lm_d <- lm(t_discipline~achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+t_days,data= user_data)
+
+lm_d4 <- lm(t_discipline~conservationscore+otcscore+self_enhancementscore+self_transcendencescore+t_days,user_data)
+
+## Projects
+lm_pn <- lm(t_projects ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+t_days, data= user_data)
+
+lm_pn4 <- lm(t_projects ~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore+t_days, data= user_data)
+
+## Tasks
+ lm_t <- lm(t_task_type~achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+t_days,user_data)
+
+lm_t4 <- lm(t_task_type~conservationscore+otcscore+self_enhancementscore+self_transcendencescore+t_days,user_data)
+```
+
+### Hypothesis 1a. Volunteers who highly value openness to change (hedonism, stimulation, and self-direction) are likely to show greater variation in projects, tasks, and disciplines.  
+```{r}
+tab_model(lm_d,lm_d4, transform = NULL)
+```
+
+```{r}
+tab_model(lm_pn,lm_pn4, transform = NULL)
+```
+
+```{r}
+tab_model(lm_t,lm_t4, transform = NULL)
+```
+
+```{r regression-h2, include=FALSE, warning=FALSE}
+
+## Tagging (Project data)
+## Users who comment 
+commenters <- user_data$user_id[which(user_data$comment_binary==1)] # list of commenters
+
+user_project_data_commenters <- user_project_data[which(user_project_data$user_id %in% commenters),]
+user_project_data_commenters$comment_binary[is.na(user_project_data_commenters$comment_binary)] <- 0
+
+## Tag (binary)
+log_tag <- glmer(tags_binary~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore + self_transcendencescore + 
+                   project_tenure_days +
+                   (1 | user_login) + (1 | project_id),
+                  family = binomial(logit), 
+                  data = user_project_data_commenters, 
+                  control = glmerControl(optimizer = "bobyqa"))
+
+log_tag4 <- glmer(tags_binary~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism +                  project_tenure_days +
+                  (1 | user_login) + (1 | project_id),
+                  family = binomial(logit), 
+                  data = user_project_data_commenters, 
+                  control = glmerControl(optimizer = "bobyqa"))
+
+## Link (binary)
+log_link <- glmer(links_binary~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore + self_transcendencescore +                    project_tenure_days +
+ (1 | user_login) + (1 | project_id),
+                  family = binomial(logit), 
+                  data = user_project_data_commenters, 
+                  control = glmerControl(optimizer = "bobyqa"))
+
+log_link4 <- glmer(links_binary~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism +  project_tenure_days + (1 | user_login) + (1 | project_id),
+                  family = binomial(logit), 
+                  data = user_project_data_commenters, 
+                  control = glmerControl(optimizer = "bobyqa"))
+```
+
+### Hypothesis 2a. Volunteers who highly value self-enhancement are likely to assume roles (e.g., tester, moderator).  
+```{r regression-h2a, include=FALSE, warning=FALSE}
+library(gtsummary)
+#https://cran.r-project.org/web/packages/gtsummary/vignettes/tbl_summary.html 
+role_see <- 
+  user_data[,c(31,54:57)] %>% tbl_summary(by="moderator_binary") %>% 
+  as_gt() %>%
+  gt::as_latex()
+
+# Differences in outcomes variables for different groups (N = 27). Rare event logistic regression
+
+```
+
+```{r, warning=FALSE}
+role_see
+```
+
+### Hypothesis 2b. Volunteers who highly value self-enhancement are likely to contribute to activities that offer recognition, like tagging and posting links 
+
+```{r}
+tab_model(log_tag,log_tag4, transform = NULL)
+```
+
+```{r}
+tab_model(log_link,log_link4, transform = NULL)
+```
+
+```{r models-export, include=FALSE}
+stargazer(lm_d4,lm_pn4,lm_t4, 
+          title="Values Model",star.cutoffs = c(0.05, 0.01, 0.001),
+          dep.var.labels=c("Disciplines","Projects","Task Types"),
+          covariate.labels = c("Conservation","OTC","Self-Enhancement","Self-Transcendence","Tenure","Constant"),
+          object.names = TRUE,
+          font.size = "small",
+          align = TRUE,
+          omit.stat=c("f", "ser"),
+          column.sep.width = "-10pt",
+          no.space = TRUE, # to remove the spaces after each line of coefficients
+          type = "latex",
+          t.auto=F, p.auto=F, 
+          ci = TRUE, 
+          report = ('vcs*'), 
+          single.row = TRUE,
+          digits=2
+          )
+
+tab_model(lm_pn4,lm_d4,lm_t4,
+  #pred.labels = c("(Intercept)", "Conservation", "Openness-to-Change", "Self-Enhancement","Self-Transcendence","Tenure"),
+  dv.labels = c("Projects (M1a)", "Disciplines (M2a)","Tasks (M3a)"),
+  p.style = c("numeric"),
+  digits.p = 2, 
+  file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models1a.html")
+
+tab_model(lm_pn,lm_d,lm_t,
+  #pred.labels = c("(Intercept)", "Achievement", "Benevolence","Conformity","Hedonism","Power","Security","Self-Direction","Stimulation","Tradition", "Universalism","Tenure"),
+  dv.labels = c("Projects (M1b)", "Disciplines (M2b)","Tasks (M3b)"),
+  p.style = c("numeric"),
+  digits.p = 2, 
+  file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models1b.html")
+```
+
+
+```{r regression-h3, include=FALSE, warning=FALSE}
+ ## HOw long does it take people to comment? Perhaps remove people who haven't been around that long? 
+
+names(user_data)[5] <- "project_tenure_days"
+
+## Comment (binary)
+trainIndex_commenter <- createDataPartition(user_data$comment_binary, p = .7,
+                                  list = FALSE,
+                                  times = 1)
+train_commenter <- user_data[ trainIndex_commenter,]
+valid_commenter <- user_data[-trainIndex_commenter,]
+
+glm_comment4 <- glm(comment_binary ~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore +                    
+ self_transcendencescore + project_tenure_days,data = train_commenter,family="binomial")
+
+ logit2prob(coef(glm_comment4)) #coefficients
+ r2_nagelkerke(glm_comment4) # performance measures
+ 
+ predictcommenter <- predict(glm_comment4 , newdata = valid_commenter, type = 'response')
+ predictcommenter <- as.numeric(predictcommenter>0.5)
+ confusionMatrix(as.factor(predictcommenter),as.factor(valid_commenter$comment_binary))
+
+ 
+glm_comment <- glm(comment_binary ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism +                   project_tenure_days
+,data = train_commenter,family="binomial")
+
+ logit2prob(coef(glm_comment)) #coefficients
+ r2_nagelkerke(glm_comment) # performance measures
+ 
+ predictcommenter2 <- predict(glm_comment , newdata = valid_commenter, type = 'response')
+ predictcommenter2 <- as.integer(predictcommenter2>0.5)
+ confusionMatrix(as.factor(predictcommenter2),as.factor(valid_commenter$comment_binary))
+```
+
+### Hypothesis 3a. Volunteers who highly value self-transcendence are likely to post comments. 
+```{r}
+tab_model(glm_comment4,glm_comment, transform = NULL)
+```
+
+###  Hypothesis 3b. Volunteers who highly value self-transcendence are likely to engage in helping by becoming a moderator and/or posting links.
+```{r}
+tab_model(log_link,log_link4, transform = NULL)
+```
+
+###  Hypothesis 3c. Volunteers who highly value self-transcendence are likely to engage in projects with a social focus/benefit, i.e., Nature.
+```{r regression-h3c, include=FALSE, warning=FALSE}
+# Get contribution counts for project types
+u_disc <- user_project_data %>% 
+  count(user_id, discipline) %>%
+  spread(discipline, n, fill=0)
+u_disc$nature <- ifelse(u_disc$`Ecology&EarthSciences`>=1,1,0)
+
+u_task <- user_project_data %>% 
+  count(user_id, task_type) %>%
+  spread(task_type, n, fill=0)
+
+user_data <- merge(user_data,u_disc, by = "user_id",all.x = TRUE)
+remove(u_disc)
+
+user_data$project_tenure_days <- as.numeric(user_data$project_tenure_days)
+# Model (Ecology and Earth Science) = Nature 
+
+
+trainIndex_nature <- createDataPartition(user_data$nature, p = .7,
+                                  list = FALSE,
+                                  times = 1)
+train_nature <- user_data[ trainIndex_nature,]
+
+trainrose<-ROSE(nature~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore + self_transcendencescore + project_tenure_days,data=train_nature)$data
+
+valid_nature <- user_data[-trainIndex_nature,]
+
+glm_nature <- glm(nature ~ conservationscore+otcscore+self_enhancementscore+self_transcendencescore + self_transcendencescore + project_tenure_days,data = trainrose,family="binomial")
+
+ logit2prob(coef(glm_nature)) #coefficients
+ r2_nagelkerke(glm_nature) # performance measures
+ 
+ predictnature <- predict(glm_nature, newdata = valid_nature, type = 'response')
+ predictnature <- as.numeric(predictnature>0.5)
+ confusionMatrix(as.factor(predictnature),as.factor(valid_nature$nature))
+
+ 
+trainrose2<-ROSE(nature~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+ project_tenure_days,data=train_nature)$data
+
+ 
+glm_nature10 <- glm(nature ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+ project_tenure_days,data = trainrose2,family="binomial")
+
+ logit2prob(coef(glm_nature10)) #coefficients
+ r2_nagelkerke(glm_nature10) # performance measures
+ 
+ predictnature10 <- predict(glm_nature10 , newdata = valid_nature, type = 'response')
+ predictnature10 <- as.integer(predictnature10>0.5)
+ confusionMatrix(as.factor(predictnature10),as.factor(valid_nature$nature))
+```
+
+```{r}
+tab_model(glm_nature,glm_nature10, transform = NULL)
+```
+
+```{r models-export2, include=FALSE}
+stargazer(glm_comment4,log_link,log_tag, 
+          title="Values Model",star.cutoffs = c(0.05, 0.01, 0.001),
+          dep.var.labels=c("Comment (Yes=1)","Post URL (Yes=1)","Tagging (Yes=1)"),
+          #covariate.labels = c("Conservation","OTC","Self-Enhancement","Self-Transcendence","Tenure","Constant"),
+          object.names = TRUE,
+          font.size = "small",
+          align = TRUE,
+          #omit.stat=c("f", "ser"),
+          column.sep.width = "-35pt",
+          no.space = FALSE, # to remove the spaces after each line of coefficients
+          type = "latex",
+          t.auto=F, p.auto=F, 
+          ci = TRUE, 
+          apply.coef=exp,
+          report = ('vcs*'), 
+          single.row = TRUE,
+          digits=2
+          )
+
+tab_model(glm_comment4,log_link,log_tag,
+  pred.labels = c("(Intercept)", "Conservation", "Openness-to-Change", "Self-Enhancement","Self-Transcendence", "Tenure"),
+  dv.labels = c("Comment (M7a)", "Hyperlink (M8a)","Tag (M9a)"),
+  p.style = c("numeric"),
+  digits.p = 2, file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models2a.html")
+
+tab_model(glm_comment,log_link4,log_tag4,
+        pred.labels = c("(Intercept)", "Achievement", "Benevolence","Conformity","Hedonism","Power","Security","Self-Direction","Stimulation","Tradition", "Universalism","Tenure"),
+  dv.labels = c("Comment (M7b)", "Hyperlink (M8b)","Tag (M9b)"),
+  p.style = c("numeric"),
+  digits.p = 2
+  , file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models2b.html"
+  )
+
+#user_perceptions <- user_data[,c(1:33)]
+#write.csv(user_perceptions,"/Volumes/cbjackson2/usersurvey/_ICWSM25/user_perceptions.csv")
+
+#user_perceptions_project <- user_project_data[,c(1:15,60:96)]
+#write.csv(user_perceptions,"/Volumes/cbjackson2/usersurvey/_ICWSM25/user_perceptions_project.csv")
+
+
+```
+
+
+### Hypothesis 4a. Volunteers who highly value conservation are likely to produce more classifications, contribute for longer durations, and have more sessions
+```{r regression-h4, include=FALSE, warning=FALSE}
+
+# Classification count (user_data)
+## Removing outliers 
+p0 <- lm(project_classifications ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism+conservationscore+otcscore+self_enhancementscore+self_transcendencescore+ project_tenure_days, data = user_project_data)
+
+cookp0 <- cooks.distance(p0)
+sample_size <- nrow(user_project_data)
+out_p0 <- as.numeric(names(cookp0)[(cookp0 > (4/sample_size))])
+user_project_outlier <- user_project_data[-out_p0, ]
+remove(p0)
+
+reg_c <- lmer(log(project_classifications) ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism + project_tenure_days + (1 | user_login) + (1 | project_id), user_project_outlier,
+              REML = FALSE)
+# res_reg_c <- residuals(reg_c) #extract residuals
+# qqnorm(res_reg_c)
+
+reg_c4 <- lmer(log(project_classifications) ~
+                 conservationscore+otcscore+self_enhancementscore + self_transcendencescore +  project_tenure_days +
+                 (1 | user_login) + (1 | project_id), user_project_outlier, 
+               REML = FALSE)
+
+# Comment count (user_data)
+lmer_comment <- lmer(log(project_comment) ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism + project_tenure_days + (1 | user_login) + (1 | project_id), user_project_data, REML = FALSE)
+# res_reg_comment <- residuals(lmer_comment) #extract residuals
+# qqnorm(res_reg_comment)
+
+lmer_comment4 <- lmer(log(project_comment) ~ conservationscore+otcscore+self_enhancementscore + self_transcendencescore + project_tenure_days +(1 | user_login) + (1 | project_id),user_project_data, REML = FALSE)
+
+
+# Tenure (sessions, days) count (user_data)
+lmer_sessions <- lmer(log(project_sessions) ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism +  project_tenure_days + (1 | user_login) + (1 | project_id), user_project_data, REML = FALSE)
+#res_reg_comment <- residuals(lmer_sessions) #extract residuals
+#qqnorm(res_reg_comment)
+
+lmer_sessions4 <- lmer(log(project_sessions) ~ conservationscore+otcscore+self_enhancementscore + self_transcendencescore + project_tenure_days+ (1 | user_login) + (1 | project_id),user_project_data, REML = FALSE)
+
+user_project_data$project_tenure_days <- user_project_data$project_tenure_days +1
+# Tenure (sessions, days) count (user_data)
+lmer_days <- lmer(log(project_tenure_days) ~ achievement+benevolence+conformity+hedonism+power+security+selfdirection+stimulation+tradition+universalism + project_tenure_days + (1 | user_login) + (1 | project_id), user_project_data, REML = FALSE)
+#res_lmer_days <- residuals(lmer_days) #extract residuals
+#qqnorm(res_lmer_days)
+
+lmer_days4 <- lmer(log(project_tenure_days) ~ conservationscore+otcscore+self_enhancementscore + self_transcendencescore + project_tenure_days + (1 | user_login) + (1 | project_id),user_project_data, REML = FALSE)
+```
+
+```{r}
+tab_model(reg_c,reg_c4, transform = NULL)
+```
+
+```{r}
+tab_model(lmer_comment,lmer_comment4, transform = NULL)
+```
+
+```{r}
+tab_model(lmer_sessions,lmer_sessions4, transform = NULL)
+```
+
+```{r}
+tab_model(lmer_days,lmer_days4, transform = NULL)
+
+#https://stackoverflow.com/questions/63053465/how-to-convert-an-html-sjtable-from-the-sjplot-package-to-latex 
+```
+
+
+```{r models-export2_a, include=FALSE}
+
+tab_model(reg_c4,lmer_comment4,lmer_sessions4,
+          pred.labels = c("(Intercept)", "Conservation", "Openness-to-Change", "Self-Enhancement","Self-Transcendence", "Tenure"),
+  dv.labels = c("Classifications (M4a)", "Comments (M5a)","Sessions (M6a)"),
+  p.style = c("numeric"),
+  digits.p = 2, file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models3a.html")
+
+tab_model(reg_c,lmer_comment,lmer_sessions,
+          pred.labels = c("(Intercept)", "Achievement", "Benevolence","Conformity","Hedonism","Power","Security","Self-Direction","Stimulation","Tradition", "Universalism","Tenure"),
+  dv.labels = c("Classifications (M4b)", "Comments (M5b)","Sessions (M6b)"),
+  p.style = c("numeric"),
+  digits.p = 2
+  , file = "C:/Users/hp/OneDrive - UW-Madison/Desktop/Fig. research statement/models3b.html"
+  )
+
+```
