@@ -29,7 +29,7 @@ all_ver1 <- all %>%
                      SELF.DIRECTIONscore >=5,
                      POWERscore <= 2)
 
-# Merge two datasets: N = 1148, NA = 642 -> 506
+# Filter by gender & value scores: N = 1448, NA = 642 -> 806
 all_ver2 <- all %>% 
   filter(gender_g == "female",
          SELF.DIRECTIONscore >=4,
