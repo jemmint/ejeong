@@ -14,6 +14,8 @@ library(tidyr)
 library(ggplot2)
 library(stringr)
 library(tidyverse)
+library(gtsummary)
+library(data.table)
 
 setwd("C:/Users/hp/OneDrive - UW-Madison/Desktop/Dissertation_value_demo_data")
 
