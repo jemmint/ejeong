@@ -1,3 +1,13 @@
+---
+title: "study2_analysis"
+author: "Ellie Jeong"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
 library(readr)
 library(dplyr)
 library(tidyr)
@@ -5,45 +15,16 @@ library(ggplot2)
 library(stringr)
 library(tidyverse)
 
-# pvq <- read.csv("pvq.users.data.csv") #N = 5436
-# 
-# #setwd("Z:/usersurvey/_raw/survey/dupe_fix")
-# demo <- read.csv("complete_responses_noipdupes.csv") #N= 5879
-# 
-# demo <- demo %>%
-#   mutate(
-#     gender_g = str_trim(Gender_Select)
-#   )
-# 
-# demo <- demo %>% mutate(gender_g = case_when(gender_g == "Female (including transgender women)" ~ "female",
-#                                              gender_g == "Male (including transgender men)" ~ "male",
-#                                              TRUE ~ NA_character_))
-# 
-# # Merge two datasets: Female = 3033, Male = 1963
-# all <- pvq %>% left_join(demo, by= "ResponseId")
-# 
-# # Filter by gender & value scores: N = 261, NA = 127 -> 134
-# all_ver1 <- all %>% 
-#   filter(gender_g == "female",
-#          SELF.DIRECTIONscore >=5,
-#          POWERscore <= 2)
-# 
-# # Filter by gender & value scores: N = 1448, NA = 642 -> 806
-# all_ver2 <- all %>%
-#   filter(gender_g == "female",
-#          SELF.DIRECTIONscore >=4,
-#          POWERscore <= 3)
-# 
-# # Create a dataset
-# write.csv(all, "merged_male_female.csv", row.names = TRUE)
-
-# Set working directory
 setwd("C:/Users/hp/OneDrive - UW-Madison/Desktop/Dissertation_value_demo_data")
 
 # Import data
 demo_value <- read.csv("merged_male_female.csv", header = TRUE)
 survey <- read.csv("final_zooniverse_survey.csv", header = TRUE)
+```
 
+## Data cleaning
+
+```{r, echo=FALSE}
 # Clean data
 ## Demo_value
 demo_value <- demo_value %>% mutate(email = str_trim(RaffleEmail))
@@ -136,20 +117,19 @@ analysis <- analysis %>%
                               ifelse(Income %in% c("$5,000 or more"),"High", NA))))
 
 analysis$Income <- factor(analysis$Income, levels=c('Low','Middle','High'))
+```
 
+## Data summary
 
-# Summary table
-make_table <- function(data, var) {
-  data %>%
-    count({{ var }}) %>%
-    mutate(percent = round(100 * n / sum(n), 1))
-}
+### Income
 
-age_table    <- make_table(analysis, AgeGroup)
-eth_table    <- make_table(analysis, single_eth)
-edu_table    <- make_table(analysis, Education)
-income_table <- make_table(analysis, Income)
+-   Low: less than \$3,000
 
+-   Mid: \$3,000 - \$ 4,999
+
+-   High: \$5,000 or more
+
+```{r pressure, echo=FALSE}
 ## Age
 age_t <- analysis %>% 
   dplyr::filter(AgeGroup != "NA") %>%
@@ -190,6 +170,8 @@ income_t <- analysis %>%
 
 names(income_t)[1] <- "Income"
 
-
-
-
+data.table(age_t)
+data.table(race_t)
+data.table(edu_t)
+data.table(income_t)
+```
