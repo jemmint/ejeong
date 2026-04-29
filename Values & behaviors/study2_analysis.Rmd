@@ -16,17 +16,23 @@ library(stringr)
 library(tidyverse)
 library(gtsummary)
 library(data.table)
+library(knitr)
+library(kableExtra)
+library(DT)
+library(gt)
+library(webshot2)
 
 setwd("C:/Users/hp/OneDrive - UW-Madison/Desktop/Dissertation_value_demo_data")
 
 # Import data
 demo_value <- read.csv("merged_male_female.csv", header = TRUE)
 survey <- read.csv("final_zooniverse_survey.csv", header = TRUE)
+workshop <- read.csv("workshop_participant.csv", header = TRUE)
 ```
 
 ## Data cleaning
 
-```{r, echo=FALSE}
+```{r, include=FALSE}
 # Clean data
 ## Demo_value
 demo_value <- demo_value %>% mutate(email = str_trim(RaffleEmail))
@@ -43,6 +49,19 @@ survey <- survey %>%
 
 survey$email <- tolower(str_trim(survey$email))
 
+# Check emails in survey but NOT in demo_value
+# "gg2032@tc.columbia.edu" "katie.burnette@ucr.edu" "" 
+
+setdiff(survey$email, demo_value$email)
+
+# Recode emails in 2021 (demo_value) data to match 2026 (survey) data
+#gg2032@tc.columbia.edu (survey) = gxgund@gmail.com (demo_value)
+#katie.burnette@ucr.edu (survey) = katiec@ucr.edu (demo_value)
+
+demo_value$email <- dplyr::recode(demo_value$email, 
+                                                   `gxgund@gmail.com` = "gg2032@tc.columbia.edu", 
+                                                   `katiec@ucr.edu` = "katie.burnette@ucr.edu")
+
 # Merge data
 merged <- survey %>% left_join(demo_value, by = "email")
 
@@ -54,14 +73,14 @@ metadata <- data[,c(4,14,15,59,61,110,114,119,120)]
 
 which(duplicated(data$email)) #row 5, 51 -> choose the first response
 data <- data[c(-5,-51),]
-sum(is.na(data$ResponseId.y)) #N = 2 (submitted email addresses different from the previous ones)
+sum(is.na(data$ResponseId.y)) #N = 0 (submitted email addresses different from the previous ones)
 
-# Emails not linked to value scores
-#gg2032@tc.columbia.edu
-#katie.burnette@ucr.edu
 
 # Create a dataset for analysis
-analysis <- data[,c(9,21:59,62:71,94:97,125,126,128,131,135,276)]
+analysis <- data[,c(9,21:59,62:71,82:91,94:97,125,126,128,131,135,276)]
+
+# Fix erroneous comma in Activity column
+analysis$Q61 <- str_replace_all(analysis$Q61, fixed("responses, announcements"), "responses/ announcements")
 
 # Recode Likert scale
 analysis <- analysis %>%
@@ -172,8 +191,159 @@ income_t <- analysis %>%
 
 names(income_t)[1] <- "Income"
 
-data.table(age_t)
-data.table(race_t)
-data.table(edu_t)
-data.table(income_t)
+datatable(age_t)
+age_t %>% gt() %>% gtsave("age_t.png")
+
+datatable(race_t)
+race_t %>% gt() %>% gtsave("race_t.png")
+
+datatable(edu_t)
+edu_t %>% gt() %>% gtsave("edu_t.png")
+
+datatable(income_t)
+income_t %>% gt() %>% gtsave("income_t.png")
 ```
+
+## Citizen Science Experience: Descriptive Statistics
+
+```{r experience_stats, echo=FALSE}
+
+# Rename columns
+analysis <- analysis %>%
+  rename(
+    Experience = Q34,
+    Frequency  = Q37,
+    Projects   = Q60,
+    Activity   = Q61
+  )
+
+# Experience
+exp_t <- analysis %>%
+  filter(!is.na(Experience) & Experience != "") %>%
+  group_by(Experience) %>%
+  summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>%
+  mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+# Frequency
+freq_t <- analysis %>%
+  filter(!is.na(Frequency) & Frequency != "") %>%
+  group_by(Frequency) %>%
+  summarize(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  mutate(Percent = round(Count / sum(Count), digits = 2) * 100)
+
+# Projects
+proj_t <- analysis %>%
+  filter(!is.na(Projects) & Projects != "") %>%
+  group_by(Projects) %>%
+  summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>%
+  mutate(Percent = round(Frequency / sum(Frequency), digits = 2) * 100)
+
+# Activity (split comma-separated values)
+act_t <- analysis %>%
+  filter(!is.na(Activity) & Activity != "") %>%
+  select(Activity) %>%
+  separate_rows(Activity, sep = ",") %>%
+  mutate(Activity = str_trim(Activity)) %>%
+  group_by(Activity) %>%
+  summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>%
+  mutate(Percent = round(Frequency / 50, digits = 2) * 100)
+
+datatable(exp_t)
+exp_t %>% gt() %>% gtsave("exp_t.png")
+
+datatable(freq_t)
+freq_t %>% gt() %>% gtsave("freq_t.png")
+
+datatable(proj_t)
+proj_t %>% gt() %>% gtsave("proj_t.png")
+
+datatable(act_t)
+act_t %>% gt() %>% gtsave("act_t.png")
+```
+
+## Value Scores: means and rank
+
+```{r value_scores, echo=FALSE}
+
+# Extract value score columns (cols 41-50 in analysis)
+value_cols <- analysis[, 41:50]
+
+# Remove "score" from column names
+colnames(value_cols) <- str_remove_all(colnames(value_cols), regex("score", ignore_case = TRUE))
+
+# Convert to numeric (in case imported as character)
+value_cols <- value_cols %>% mutate(across(everything(), as.numeric))
+
+# Calculate column means and rank
+value_summary <- data.frame(
+  Value = colnames(value_cols),
+  Mean  = colMeans(value_cols, na.rm = TRUE)
+) %>%
+  arrange(desc(Mean)) %>%
+  mutate(
+    Rank = row_number(),
+    Mean = round(Mean, 2)
+  )
+
+# Table
+datatable(value_summary)
+value_summary %>% gt() %>% gtsave("value_summary.png")
+
+# Bar plot
+ggplot(value_summary, aes(x = reorder(Value, -Mean), y = Mean, fill = Mean)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  geom_text(aes(label = Mean), vjust = -0.4, size = 3.5) +
+  scale_fill_gradient(low = "#a8c8e8", high = "#1a5fa8") +
+  labs(
+    title = "Average Value Scores",
+    x     = "Value",
+    y     = "Mean Score"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  )
+
+# Lollipop chart
+ggplot(value_summary, aes(x = reorder(Value, Mean), y = Mean)) +
+  geom_segment(aes(xend = reorder(Value, Mean), yend = 0), color = "gray70", linewidth = 0.8) +
+  geom_point(aes(color = Mean), size = 5) +
+  geom_text(aes(label = Mean), hjust = -0.5, size = 3.5) +
+  scale_color_gradient(low = "#a8c8e8", high = "#1a5fa8") +
+  coord_flip() +
+  labs(
+    title = "Average Value Scores",
+    x     = "Value",
+    y     = "Mean Score"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+ggsave("value_lollipop.png", width = 8.5, height = 6, dpi = 300)
+```
+
+## Workshop participants
+
+```{r workshop, echo=FALSE}
+workshop$email <- tolower(str_trim(workshop$email))
+
+# Merge data
+workshop_demo <- workshop %>% left_join(analysis, by = "email")
+
+# Recode
+workshop_demo$Education <- as.character(workshop_demo$Education)
+workshop_demo$Education[is.na(workshop_demo$Education)] <- "Prefer not to answer"
+workshop_demo$Country[workshop_demo$Country == "United Kingdom of Great Britain and Northern Ireland"] <- "UK"
+workshop_demo$Country[workshop_demo$Country == "United States of America"] <- "US"
+
+# Summary table 
+wd_table <- workshop_demo %>% select(Age,Country,single_eth, Education, Experience, Frequency) %>% arrange(Age)
+datatable(wd_table)
+wd_table %>% gt() %>% gtsave("workshop_demo.png")
+```
+
