@@ -138,6 +138,28 @@ analysis <- analysis %>%
                               ifelse(Income %in% c("$5,000 or more"),"High", NA))))
 
 analysis$Income <- factor(analysis$Income, levels=c('Low','Middle','High'))
+
+# Recode Q23 → self_conflict and Q79 → power_conflict
+value_label_map <- c(
+  "Doing what is expected/avoiding upsetting others/following shared rules and norms"    = "Conformity",
+  "Keeping things safe/stable/protected from risks or threats"                           = "Security",
+  "Respecting long-standing ways of doing things and established customs"                = "Tradition",
+  "Being helpful/dependable/looking after people you feel close to in the community"     = "Benevolence",
+  "Fairness and equal treatment for everyone/concern for people and nature beyond your immediate circle" = "Universalism",
+  "Demonstrating skill and excellence/achieving high standards/being seen as competent"  = "Achievement",
+  "Enjoying activities that feel pleasant/fun/comfortable"                               = "Hedonism",
+  "Seeking novelty/excitement/new challenges"                                            = "Stimulation",
+  "Having a meaningful say in how things are done"                                       = "Power",
+  "Having room to decide for themselves"                                                 = "Self-direction"
+)
+
+analysis <- analysis %>%
+  mutate(
+    self_conflict_1  = dplyr::recode(str_trim(str_split_fixed(Q23, ",", 2)[, 1]), !!!value_label_map),
+    self_conflict_2  = dplyr::recode(str_trim(str_split_fixed(Q23, ",", 2)[, 2]), !!!value_label_map),
+    power_conflict_1 = dplyr::recode(str_trim(str_split_fixed(Q79, ",", 2)[, 1]), !!!value_label_map),
+    power_conflict_2 = dplyr::recode(str_trim(str_split_fixed(Q79, ",", 2)[, 2]), !!!value_label_map)
+  )
 ```
 
 ## Data summary
@@ -267,6 +289,36 @@ act_t %>% gt() %>% gtsave("act_t.png")
 
 ## Value Scores: means and rank
 
+### Study 1 female value analysis (N = 3,033)
+
+```{r value_scores, echo=FALSE}
+# Extract value score columns
+value_cols_1 <- demo_value[, 3:12]
+
+# Remove "score" from column names
+colnames(value_cols_1) <- str_remove_all(colnames(value_cols_1), regex("score", ignore_case = TRUE))
+
+# Convert to numeric (in case imported as character)
+value_cols_1 <- value_cols_1 %>% mutate(across(everything(), as.numeric))
+
+# Calculate column means and rank
+value_summary_1 <- data.frame(
+  Value = colnames(value_cols_1),
+  Mean  = colMeans(value_cols_1, na.rm = TRUE)
+) %>%
+  arrange(desc(Mean)) %>%
+  mutate(
+    Rank = row_number(),
+    Mean = round(Mean, 2)
+  )
+
+# Table
+datatable(value_summary_1)
+value_summary_1 %>% gt() %>% gtsave("value_summary_1.png")
+```
+
+### Study 2 female value analysis (N = 50)
+
 ```{r value_scores, echo=FALSE}
 
 # Extract value score columns (cols 41-50 in analysis)
@@ -291,7 +343,7 @@ value_summary <- data.frame(
 
 # Table
 datatable(value_summary)
-value_summary %>% gt() %>% gtsave("value_summary.png")
+value_summary %>% gt() %>% gtsave("value_summary_2.png")
 
 # Bar plot
 ggplot(value_summary, aes(x = reorder(Value, -Mean), y = Mean, fill = Mean)) +
@@ -340,10 +392,62 @@ workshop_demo$Education <- as.character(workshop_demo$Education)
 workshop_demo$Education[is.na(workshop_demo$Education)] <- "Prefer not to answer"
 workshop_demo$Country[workshop_demo$Country == "United Kingdom of Great Britain and Northern Ireland"] <- "UK"
 workshop_demo$Country[workshop_demo$Country == "United States of America"] <- "US"
+workshop_demo <- workshop_demo %>% rename(Ethnicity = single_eth)
 
 # Summary table 
-wd_table <- workshop_demo %>% select(Age,Country,single_eth, Education, Experience, Frequency) %>% arrange(Age)
+# wd_table <- workshop_demo %>% select(Age,Country,single_eth, Education, Experience, Frequency) %>% arrange(Age)
+# datatable(wd_table)
+# wd_table %>% gt() %>% gtsave("workshop_demo.png")
+
+wd_table <- workshop_demo %>%
+  select(Age, Country, Ethnicity, Education, Experience, Frequency) %>%
+  arrange(Age) %>%
+  mutate(No = row_number()) %>%   # add numbering
+  relocate(No)                    # move it to the first column
+
 datatable(wd_table)
-wd_table %>% gt() %>% gtsave("workshop_demo.png")
+
+wd_table %>%
+  gt() %>%
+  gtsave("workshop_demo.png")
 ```
 
+## Value Conflict: Frequency Tables
+### Self-direction: Achievement/Power/Tradition
+### Power: Conformity/Tradition/Stimulation 
+
+```{r conflict_freq, echo=FALSE}
+# self_conflict frequency table (Q23, both values combined)
+self_freq <- bind_rows(
+  analysis %>% select(Value = self_conflict_1),
+  analysis %>% select(Value = self_conflict_2)
+) %>%
+  filter(!is.na(Value) & Value != "") %>%
+  group_by(Value) %>%
+  summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>%
+  mutate(
+    Pct_of_mentions    = round(Frequency / sum(Frequency) * 100, 1),
+    Pct_of_respondents = round(Frequency / nrow(analysis) * 100, 1)
+  )
+
+datatable(self_freq, caption = "Frequency Table: self_conflict (Q23)")
+self_freq %>% gt() %>% gtsave("self_conflict_freq.png")
+
+# power_conflict frequency table (Q79, both values combined)
+power_freq <- bind_rows(
+  analysis %>% select(Value = power_conflict_1),
+  analysis %>% select(Value = power_conflict_2)
+) %>%
+  filter(!is.na(Value) & Value != "") %>%
+  group_by(Value) %>%
+  summarize(Frequency = n()) %>%
+  arrange(desc(Frequency)) %>%
+  mutate(
+    Pct_of_mentions    = round(Frequency / sum(Frequency) * 100, 1),
+    Pct_of_respondents = round(Frequency / nrow(analysis) * 100, 1)
+  )
+
+datatable(power_freq, caption = "Frequency Table: power_conflict (Q79)")
+power_freq %>% gt() %>% gtsave("power_conflict_freq.png")
+```
