@@ -5,40 +5,42 @@ library(ggplot2)
 library(stringr)
 library(tidyverse)
 
-# pvq <- read.csv("pvq.users.data.csv") #N = 5436
-# 
-# #setwd("Z:/usersurvey/_raw/survey/dupe_fix")
+# Creating a dataset: "merged_male_female.csv"
+# setwd("/Users/hp/Dissertation_value_demo_data/study2")
+# pvq <- read.csv("pvq.users.data.csv") #N = 5436 (Study1 stats. Female: 3,141, Male: 2,020, Other:192)
 # demo <- read.csv("complete_responses_noipdupes.csv") #N= 5879
 # 
 # demo <- demo %>%
 #   mutate(
-#     gender_g = str_trim(Gender_Select)
+#     gender_g = str_trim(Gender_Select),
+#     gender_g = recode(
+#       gender_g,
+#       "Female (including transgender women)" = "female",
+#       "Male (including transgender men)" = "male"
+#     ),
+#     gender_g = case_when(
+#       gender_g %in% c("female", "male") ~ gender_g,
+#       TRUE ~ "other"
+#     )
 #   )
 # 
-# demo <- demo %>% mutate(gender_g = case_when(gender_g == "Female (including transgender women)" ~ "female",
-#                                              gender_g == "Male (including transgender men)" ~ "male",
-#                                              TRUE ~ NA_character_))
-# 
-# # Merge two datasets: Female = 3033, Male = 1963
+# # Merge two datasets: N = 5436/ Female = 3,033 (valid email = 1,817), Male = 1963, Other = 271, NA = 169
 # all <- pvq %>% left_join(demo, by= "ResponseId")
-# 
-# # Filter by gender & value scores: N = 261, NA = 127 -> 134
-# all_ver1 <- all %>% 
+
+# # Filter by gender & value scores: N = 261, valid email = 134 (NA = 127)
+# all_ver1 <- all %>%
 #   filter(gender_g == "female",
 #          SELF.DIRECTIONscore >=5,
 #          POWERscore <= 2)
 # 
-# # Filter by gender & value scores: N = 1448, NA = 642 -> 806
+# # Filter by gender & value scores: N = 1448, valid email = 806 (NA = 642)
 # all_ver2 <- all %>%
 #   filter(gender_g == "female",
 #          SELF.DIRECTIONscore >=4,
 #          POWERscore <= 3)
-# 
-# # Create a dataset
-# write.csv(all, "merged_male_female.csv", row.names = TRUE)
 
-# Set working directory
-setwd("C:/Users/hp/OneDrive - UW-Madison/Desktop/Dissertation_value_demo_data")
+# Save a dataset
+#write.csv(all, "merged_male_female.csv", row.names = TRUE)
 
 # Import data
 demo_value <- read.csv("merged_male_female.csv", header = TRUE)
