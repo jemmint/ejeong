@@ -53,7 +53,7 @@ library(purrr)
 # Import data
 setwd("/Volumes/cbjackson2/values_ellie/study2/data")
 
-demo_value <- read.csv("merged_male_female.csv", header = TRUE, fileEncoding = "latin1")
+demo_value <- read.csv("merged_male_female.csv", header = TRUE, fileEncoding = "latin1")[, -1]
 survey <- read.csv("final_zooniverse_survey.csv", header = TRUE, fileEncoding = "latin1")
 workshop <- read_csv("workshop_participant.csv")
 ```
