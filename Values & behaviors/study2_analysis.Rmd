@@ -540,7 +540,7 @@ value_summary_1 %>% gt() %>% gtsave("all_value_ranking.png")
 
 ### Study 1 female value analysis (N = 3,033)
 
-```{r value_scores, echo=FALSE}
+```{r value_scores_s1_female, echo=FALSE}
 # Delete gender group
 value_cols_2 <- value_cols_2[,-11]
 
@@ -567,7 +567,7 @@ value_summary_2 %>% gt() %>% gtsave("female_study1_value_ranking.png")
 
 ### Study 2 female value analysis (N = 50)
 
-```{r value_scores, echo=FALSE}
+```{r value_scores_s2_female, echo=FALSE}
 
 # Extract value score columns (cols 41-50 in analysis)
 value_cols <- analysis[, 41:50]
